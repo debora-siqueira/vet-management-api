@@ -21,8 +21,8 @@
     <form method="POST" action="{{ url_for('alterar_senha') }}">
         <div class="g">
             <div><label>Senha atual</label><input type="password" name="atual" required></div>
-            <div><label>Nova senha (mín. 6)</label><input type="password" name="nova" required></div>
-            <div><label>Confirmar nova senha</label><input type="password" name="confirma" required></div>
+            <div><label>Nova senha (mín. 12)</label><input type="password" name="nova" minlength="12" required></div>
+            <div><label>Confirmar nova senha</label><input type="password" name="confirma" minlength="12" required></div>
         </div>
         <p class="linha mt-3"><button type="submit" class="b">Alterar senha</button></p>
     </form>

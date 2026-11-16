@@ -622,8 +622,8 @@ def ler_usuario(id_atual=None):
         erro = 'Veterinário exige CRMV.'
     elif email_em_uso(dados['email'], id_atual):
         erro = 'E-mail já cadastrado.'
-    elif (id_atual is None or senha) and len(senha) < 6:
-        erro = 'A senha deve ter pelo menos 6 caracteres.'
+    elif (id_atual is None or senha) and len(senha) < 12:
+        erro = 'A senha deve ter pelo menos 12 caracteres.'
     else:
         erro = None
     if dados['perfil'] != 'veterinario':
@@ -728,8 +728,8 @@ def alterar_senha():
     confirma = request.form.get('confirma', '')
     if not u.check_senha(atual):
         flash('Senha atual incorreta.', 'error')
-    elif len(nova) < 6:
-        flash('A nova senha deve ter pelo menos 6 caracteres.', 'error')
+    elif len(nova) < 12:
+        flash('A nova senha deve ter pelo menos 12 caracteres.', 'error')
     elif nova != confirma:
         flash('A confirmação não confere com a nova senha.', 'error')
     else:

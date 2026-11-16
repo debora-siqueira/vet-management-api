@@ -11,8 +11,8 @@
         <div class="g">
             <div><label>Nome</label><input type="text" name="nome" value="{{ u.nome if u else '' }}" required></div>
             <div><label>E-mail</label><input type="email" name="email" value="{{ u.email if u else '' }}" required></div>
-            <div><label>{{ 'Nova senha (deixe em branco para manter)' if u else 'Senha inicial (mín. 6)' }}</label>
-                <input type="password" name="senha" {{ '' if u else 'required' }}></div>
+            <div><label>{{ 'Nova senha (deixe em branco para manter)' if u else 'Senha inicial (mín. 12)' }}</label>
+                <input type="password" name="senha" minlength="12" {{ '' if u else 'required' }}></div>
             <div><label>Perfil</label>
                 <select name="perfil" {{ 'disabled' if u and u.id == current_user.id }}>
                     {% for p in perfis %}<option value="{{ p }}" {{ 'selected' if u and u.perfil == p }}>{{ p|capitalize }}</option>{% endfor %}
