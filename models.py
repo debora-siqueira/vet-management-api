@@ -9,8 +9,8 @@ class Usuario(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     nome = db.Column(db.String(100), nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=False)
-    senha_hash = db.Column(db.String(255), nullable=False)   # RNF13
-    perfil = db.Column(db.String(20), nullable=False)        # administrador | atendente | veterinario
+    senha_hash = db.Column(db.String(255), nullable=False)
+    perfil = db.Column(db.String(20), nullable=False)
     crmv = db.Column(db.String(20))
     ativo = db.Column(db.Boolean, default=True)
 
@@ -24,7 +24,7 @@ class Usuario(UserMixin, db.Model):
 class Tutor(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     nome = db.Column(db.String(100), nullable=False)
-    cpf = db.Column(db.String(14), unique=True, nullable=False)  # RN08
+    cpf = db.Column(db.String(14), unique=True, nullable=False)
     telefone = db.Column(db.String(20))
     endereco = db.Column(db.String(200))
     email = db.Column(db.String(120))
@@ -42,7 +42,6 @@ class Pet(db.Model):
     ativo = db.Column(db.Boolean, default=True)
     tutor_id = db.Column(db.Integer, db.ForeignKey('tutor.id'), nullable=False)
 
-    # NOVO: permite usar pet.tutor.nome e tutor.pets nos templates
     tutor = db.relationship('Tutor', backref='pets')
 
 
@@ -50,15 +49,13 @@ class Consulta(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     pet_id = db.Column(db.Integer, db.ForeignKey('pet.id'), nullable=False)
     vet_id = db.Column(db.Integer, db.ForeignKey('usuario.id'), nullable=False)
-    data = db.Column(db.String(10), nullable=False)    # 2026-11-12
-    hora = db.Column(db.String(5), nullable=False)     # 14:00
+    data = db.Column(db.String(10), nullable=False)
+    hora = db.Column(db.String(5), nullable=False)
     status = db.Column(db.String(20), default='Agendada')
 
-    # NOVO: permite usar consulta.pet.nome e consulta.vet.nome nos templates
     pet = db.relationship('Pet')
     vet = db.relationship('Usuario')
 
-    # RN01: um vet não pode ter 2 consultas no mesmo horário (cancelada não conta)
     __table_args__ = (db.Index('uq_vet_horario', 'vet_id', 'data', 'hora',
                                unique=True, sqlite_where=db.text("status != 'Cancelada'")),)
 
