@@ -2,11 +2,9 @@
 from models import Usuario, Tutor, Pet, Consulta, Prontuario
 
 with app.app_context():
-    # Apaga as tabelas antigas e recria do zero
     db.drop_all()
     db.create_all()
     
-    # Cria os 3 usuários oficiais
     usuarios = [
         {'nome': 'Marta Souza', 'email': 'admin@clinica.com', 'senha': '123456', 'perfil': 'administrador'},
         {'nome': 'Carlos Lima', 'email': 'atendente@clinica.com', 'senha': '123456', 'perfil': 'atendente'},

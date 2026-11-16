@@ -11,13 +11,10 @@ from models import db, Usuario, Tutor, Pet, Consulta, Prontuario
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///vet.db'
 app.config['SECRET_KEY'] = 'troque-isto'
-app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=10)   # RN06 / RNF09
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=10)
 
 db.init_app(app)
 
-# =====================================================================
-# LOGIN E CONTROLE DE ACESSO
-# =====================================================================
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
@@ -42,10 +39,7 @@ def perfil_requerido(*perfis):
     return decorator
 
 
-# =====================================================================
-# FUNÇÕES AUXILIARES
-# =====================================================================
-HORARIOS = [f'{h:02d}:{m:02d}' for h in range(8, 18) for m in (0, 30)]   # RN07
+HORARIOS = [f'{h:02d}:{m:02d}' for h in range(8, 18) for m in (0, 30)]
 PERFIS = ('administrador', 'atendente', 'veterinario')
 CAMPOS_PRONTUARIO = ('sintomas', 'observacoes', 'diagnostico',
                      'procedimentos', 'medicacoes', 'orientacoes')
@@ -99,9 +93,6 @@ def email_em_uso(email, id_atual=None):
     return Usuario.query.filter(Usuario.email == email, Usuario.id != (id_atual or 0)).first() is not None
 
 
-# =====================================================================
-# LOGIN / LOGOUT (RF01)
-# =====================================================================
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if current_user.is_authenticated:
@@ -128,9 +119,6 @@ def logout():
     return redirect(url_for('login'))
 
 
-# =====================================================================
-# TELA INICIAL (RF08)
-# =====================================================================
 @app.route('/')
 @login_required
 def index():
@@ -153,9 +141,6 @@ def index():
                            livres=livres)
 
 
-# =====================================================================
-# TUTORES E PETS (RF03)
-# =====================================================================
 @app.route('/tutores-pets')
 @login_required
 def tutores_pets():
@@ -218,7 +203,7 @@ def editar_tutor(id):
 @app.route('/tutores/<int:id>/inativar', methods=['POST'])
 @login_required
 @perfil_requerido('atendente')
-def inativar_tutor(id):                      # RN09: inativa, não exclui
+def inativar_tutor(id):
     db.get_or_404(Tutor, id).ativo = False
     db.session.commit()
     flash('Tutor inativado (histórico preservado).', 'ok')
@@ -306,9 +291,6 @@ def reativar_pet(id):
     return redirect(url_for('tutores_pets'))
 
 
-# =====================================================================
-# AGENDA (RF04)
-# =====================================================================
 @app.route('/agenda')
 @login_required
 def agenda():
@@ -337,7 +319,7 @@ def agendar():
     hora = request.form.get('hora', '')
 
     erro = 'Selecione o animal e o veterinário.' if not pet_id or not vet_id \
-        else validar_horario(vet_id, data, hora)                       # RN02, RN07
+        else validar_horario(vet_id, data, hora)
     if erro:
         flash(erro, 'error')
         return redirect(url_for('agenda'))
@@ -346,7 +328,7 @@ def agendar():
     try:
         db.session.commit()
         flash('Consulta agendada.', 'ok')
-    except IntegrityError:                                             # RN01
+    except IntegrityError:
         db.session.rollback()
         flash('Horário ocupado para este veterinário. Escolha outro.', 'error')
     return redirect(url_for('agenda'))
@@ -369,11 +351,11 @@ def reagendar(id):
         flash(erro, 'error')
         return redirect(url_for('agenda', reagendar=id))
 
-    c.vet_id, c.data, c.hora = vet_id, data, hora        # o horário antigo é liberado (RN03)
+    c.vet_id, c.data, c.hora = vet_id, data, hora
     try:
         db.session.commit()
         flash('Consulta reagendada.', 'ok')
-    except IntegrityError:                               # RN01
+    except IntegrityError:
         db.session.rollback()
         flash('Horário ocupado para este veterinário. Escolha outro.', 'error')
         return redirect(url_for('agenda', reagendar=id))
@@ -386,15 +368,12 @@ def reagendar(id):
 def cancelar(id):
     c = db.get_or_404(Consulta, id)
     if c.status == 'Agendada':
-        c.status = 'Cancelada'                           # RN03
+        c.status = 'Cancelada'
         db.session.commit()
         flash('Consulta cancelada; horário liberado.', 'ok')
     return redirect(url_for('agenda'))
 
 
-# =====================================================================
-# PRONTUÁRIO (RF05) – somente o veterinário responsável (RN05)
-# =====================================================================
 @app.route('/prontuario')
 @login_required
 @perfil_requerido('veterinario')
@@ -412,7 +391,7 @@ def prontuario():
 @perfil_requerido('veterinario')
 def prontuario_form(consulta_id):
     c = db.get_or_404(Consulta, consulta_id)
-    if c.vet_id != current_user.id:                      # RN05
+    if c.vet_id != current_user.id:
         flash('Esta consulta é de outro veterinário.', 'error')
         return redirect(url_for('prontuario'))
     if c.status == 'Cancelada':
@@ -423,7 +402,7 @@ def prontuario_form(consulta_id):
     if request.method == 'POST':
         f = {k: request.form.get(k, '').strip() for k in CAMPOS_PRONTUARIO}
         if not f['sintomas'] or not f['diagnostico'] or not f['procedimentos']:
-            flash('Preencha os campos obrigatórios (*).', 'error')     # os dados digitados são mantidos (RNF03)
+            flash('Preencha os campos obrigatórios (*).', 'error')
         else:
             if p is None:
                 p = Prontuario(consulta_id=c.id)
@@ -440,9 +419,6 @@ def prontuario_form(consulta_id):
     return render_template('prontuario_form.html', c=c, f=f)
 
 
-# =====================================================================
-# HISTÓRICO DO ANIMAL (RF07) – veterinário
-# =====================================================================
 @app.route('/historico')
 @login_required
 @perfil_requerido('veterinario')
@@ -457,9 +433,6 @@ def historico():
                            pet=pet, registros=registros)
 
 
-# =====================================================================
-# BUSCA (RF06) – todos os perfis
-# =====================================================================
 @app.route('/busca')
 @login_required
 def busca():
@@ -474,9 +447,6 @@ def busca():
     return render_template('busca.html', q=q, pets=pets, tutores=tutores)
 
 
-# =====================================================================
-# USUÁRIOS E VETERINÁRIOS (RF02) – administrador
-# =====================================================================
 def ler_usuario(id_atual=None):
     """Lê e valida o formulário de usuário. Retorna (dados, senha, erro)."""
     dados = dict(nome=request.form.get('nome', '').strip(),
@@ -519,7 +489,7 @@ def cadastrar_usuario():
         flash(erro, 'error')
     else:
         u = Usuario(**dados)
-        u.set_senha(senha)                               # RNF13: só o hash é salvo
+        u.set_senha(senha)
         db.session.add(u)
         db.session.commit()
         flash('Usuário cadastrado.', 'ok')
@@ -535,7 +505,7 @@ def editar_usuario(id):
     if erro:
         flash(erro, 'error')
         return redirect(url_for('usuarios', editar=id))
-    if u.id == current_user.id:                          # evita o admin se tirar do próprio acesso
+    if u.id == current_user.id:
         dados['perfil'] = u.perfil
     for k, v in dados.items():
         setattr(u, k, v)
@@ -554,7 +524,7 @@ def inativar_usuario(id):
     if u.id == current_user.id:
         flash('Você não pode inativar a própria conta.', 'error')
     else:
-        u.ativo = False                                  # RN09
+        u.ativo = False
         db.session.commit()
         flash('Usuário inativado.', 'ok')
     return redirect(url_for('usuarios'))
@@ -570,9 +540,6 @@ def reativar_usuario(id):
     return redirect(url_for('usuarios'))
 
 
-# =====================================================================
-# MEU PERFIL (RF02) – todos os perfis
-# =====================================================================
 @app.route('/perfil', methods=['GET', 'POST'])
 @login_required
 def perfil():
@@ -612,12 +579,8 @@ def alterar_senha():
     return redirect(url_for('perfil'))
 
 
-# =====================================================================
-# INICIALIZAÇÃO
-# =====================================================================
 with app.app_context():
     db.create_all()
 
-# IMPORTANTE: app.run() sempre por ÚLTIMO. Rotas definidas depois dele não existem.
 if __name__ == '__main__':
     app.run(debug=True)
