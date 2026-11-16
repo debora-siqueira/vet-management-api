@@ -1,0 +1,623 @@
+from datetime import date, datetime, timedelta
+from functools import wraps
+
+from flask import Flask, render_template, request, redirect, url_for, flash, session
+from flask_login import LoginManager, login_user, logout_user, login_required, current_user
+from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
+
+from models import db, Usuario, Tutor, Pet, Consulta, Prontuario
+
+app = Flask(__name__)
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///vet.db'
+app.config['SECRET_KEY'] = 'troque-isto'
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=10)   # RN06 / RNF09
+
+db.init_app(app)
+
+# =====================================================================
+# LOGIN E CONTROLE DE ACESSO
+# =====================================================================
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'login'
+login_manager.login_message = 'Por favor, faça login para acessar a página.'
+
+
+@login_manager.user_loader
+def load_user(user_id):
+    return db.session.get(Usuario, int(user_id))
+
+
+def perfil_requerido(*perfis):
+    """Protege a rota por perfil (Seção 4.5 do documento)."""
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            if current_user.perfil not in perfis:
+                flash('Acesso negado: seu perfil não tem permissão para esta ação.', 'error')
+                return redirect(url_for('index'))
+            return f(*args, **kwargs)
+        return decorated_function
+    return decorator
+
+
+# =====================================================================
+# FUNÇÕES AUXILIARES
+# =====================================================================
+HORARIOS = [f'{h:02d}:{m:02d}' for h in range(8, 18) for m in (0, 30)]   # RN07
+PERFIS = ('administrador', 'atendente', 'veterinario')
+CAMPOS_PRONTUARIO = ('sintomas', 'observacoes', 'diagnostico',
+                     'procedimentos', 'medicacoes', 'orientacoes')
+
+
+@app.template_filter('data_br')
+def data_br(d):
+    """2026-11-12 -> 12/11/2026"""
+    return f'{d[8:10]}/{d[5:7]}/{d[:4]}' if d else ''
+
+
+def formatar_cpf(cpf):
+    """Retorna o CPF como 000.000.000-00 ou None se for inválido (RN08)."""
+    d = ''.join(c for c in cpf if c.isdigit())
+    if len(d) != 11 or d == d[0] * 11:
+        return None
+    for t in (9, 10):
+        soma = sum(int(d[i]) * (t + 1 - i) for i in range(t))
+        if (soma * 10 % 11) % 10 != int(d[t]):
+            return None
+    return f'{d[:3]}.{d[3:6]}.{d[6:9]}-{d[9:]}'
+
+
+def mapa_ocupados(ignorar_id=None):
+    """{vet_id: {data: [horas ocupadas]}} para bloquear horários na tela (RNF04)."""
+    q = Consulta.query.filter(Consulta.status != 'Cancelada')
+    if ignorar_id:
+        q = q.filter(Consulta.id != ignorar_id)
+    mapa = {}
+    for c in q:
+        mapa.setdefault(str(c.vet_id), {}).setdefault(c.data, []).append(c.hora)
+    return mapa
+
+
+def validar_horario(vet_id, data, hora):
+    """Regras RN02 e RN07. Retorna a mensagem de erro ou None."""
+    if not vet_id:
+        return 'Selecione o veterinário.'
+    if hora not in HORARIOS:
+        return 'Horário fora do funcionamento da clínica (8h às 18h).'
+    try:
+        quando = datetime.strptime(f'{data} {hora}', '%Y-%m-%d %H:%M')
+    except ValueError:
+        return 'Informe uma data válida.'
+    if quando < datetime.now():
+        return 'Não é possível agendar em data ou horário passado.'
+    return None
+
+
+def email_em_uso(email, id_atual=None):
+    return Usuario.query.filter(Usuario.email == email, Usuario.id != (id_atual or 0)).first() is not None
+
+
+# =====================================================================
+# LOGIN / LOGOUT (RF01)
+# =====================================================================
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if current_user.is_authenticated:
+        return redirect(url_for('index'))
+
+    if request.method == 'POST':
+        email = request.form.get('email', '').strip().lower()
+        senha = request.form.get('senha', '')
+        usuario = Usuario.query.filter_by(email=email).first()
+
+        if usuario and usuario.ativo and usuario.check_senha(senha):
+            login_user(usuario)
+            session.permanent = True
+            return redirect(url_for('index'))
+        flash('E-mail ou senha incorretos.', 'error')
+
+    return render_template('login.html')
+
+
+@app.route('/logout')
+@login_required
+def logout():
+    logout_user()
+    return redirect(url_for('login'))
+
+
+# =====================================================================
+# TELA INICIAL (RF08)
+# =====================================================================
+@app.route('/')
+@login_required
+def index():
+    hoje = date.today().isoformat()
+    agora = datetime.now().strftime('%H:%M')
+    agendadas = (Consulta.query.filter_by(status='Agendada')
+                 .order_by(Consulta.data, Consulta.hora).all())
+    ocupados = mapa_ocupados()
+
+    livres = []
+    for v in Usuario.query.filter_by(perfil='veterinario', ativo=True).all():
+        ocup = ocupados.get(str(v.id), {}).get(hoje, [])
+        livres.append((v, [h for h in HORARIOS if h not in ocup and h > agora]))
+
+    return render_template('index.html',
+                           total_agendadas=len(agendadas),
+                           consultas_hoje=[c for c in agendadas if c.data == hoje],
+                           proximas=[c for c in agendadas if c.data > hoje],
+                           consultas_realizadas=Consulta.query.filter_by(status='Realizada').count(),
+                           livres=livres)
+
+
+# =====================================================================
+# TUTORES E PETS (RF03)
+# =====================================================================
+@app.route('/tutores-pets')
+@login_required
+def tutores_pets():
+    editar = current_user.perfil == 'atendente'
+    tutor_edit = db.session.get(Tutor, request.args.get('editar_tutor', type=int) or 0) if editar else None
+    pet_edit = db.session.get(Pet, request.args.get('editar_pet', type=int) or 0) if editar else None
+    return render_template('tutores_pets.html',
+                           tutores=Tutor.query.order_by(Tutor.nome).all(),
+                           pets=Pet.query.order_by(Pet.nome).all(),
+                           tutor_edit=tutor_edit, pet_edit=pet_edit)
+
+
+def ler_tutor(id_atual=None):
+    """Lê e valida o formulário do tutor. Retorna (dados, erro)."""
+    nome = request.form.get('nome', '').strip()
+    telefone = request.form.get('telefone', '').strip()
+    cpf = formatar_cpf(request.form.get('cpf', ''))
+    dados = dict(nome=nome, telefone=telefone, cpf=cpf,
+                 email=request.form.get('email', '').strip(),
+                 endereco=request.form.get('endereco', '').strip())
+    if not nome or not telefone:
+        return dados, 'Informe nome e telefone.'
+    if not cpf:
+        return dados, 'CPF inválido.'
+    if Tutor.query.filter(Tutor.cpf == cpf, Tutor.id != (id_atual or 0)).first():
+        return dados, 'CPF já cadastrado.'
+    return dados, None
+
+
+@app.route('/tutores', methods=['POST'])
+@login_required
+@perfil_requerido('atendente')
+def cadastrar_tutor():
+    dados, erro = ler_tutor()
+    if erro:
+        flash(erro, 'error')
+    else:
+        db.session.add(Tutor(**dados))
+        db.session.commit()
+        flash('Tutor cadastrado.', 'ok')
+    return redirect(url_for('tutores_pets'))
+
+
+@app.route('/tutores/<int:id>/editar', methods=['POST'])
+@login_required
+@perfil_requerido('atendente')
+def editar_tutor(id):
+    t = db.get_or_404(Tutor, id)
+    dados, erro = ler_tutor(id)
+    if erro:
+        flash(erro, 'error')
+        return redirect(url_for('tutores_pets', editar_tutor=id))
+    for k, v in dados.items():
+        setattr(t, k, v)
+    db.session.commit()
+    flash('Tutor atualizado.', 'ok')
+    return redirect(url_for('tutores_pets'))
+
+
+@app.route('/tutores/<int:id>/inativar', methods=['POST'])
+@login_required
+@perfil_requerido('atendente')
+def inativar_tutor(id):                      # RN09: inativa, não exclui
+    db.get_or_404(Tutor, id).ativo = False
+    db.session.commit()
+    flash('Tutor inativado (histórico preservado).', 'ok')
+    return redirect(url_for('tutores_pets'))
+
+
+@app.route('/tutores/<int:id>/reativar', methods=['POST'])
+@login_required
+@perfil_requerido('atendente')
+def reativar_tutor(id):
+    db.get_or_404(Tutor, id).ativo = True
+    db.session.commit()
+    flash('Tutor reativado.', 'ok')
+    return redirect(url_for('tutores_pets'))
+
+
+def ler_pet():
+    """Lê e valida o formulário do pet. Retorna (dados, erro)."""
+    nome = request.form.get('nome', '').strip()
+    tutor = db.session.get(Tutor, request.form.get('tutor_id', type=int) or 0)
+    dados = dict(nome=nome, tutor_id=tutor.id if tutor else None,
+                 raca=request.form.get('raca', '').strip(),
+                 sexo=request.form.get('sexo', ''),
+                 idade=request.form.get('idade', type=int),
+                 peso=request.form.get('peso', type=float),
+                 alergias=request.form.get('alergias', '').strip())
+    if not nome or not tutor:
+        return dados, 'Informe o nome do pet e selecione o tutor.'
+    return dados, None
+
+
+@app.route('/pets', methods=['POST'])
+@login_required
+@perfil_requerido('atendente')
+def cadastrar_pet():
+    dados, erro = ler_pet()
+    if erro:
+        flash(erro, 'error')
+    elif not db.session.get(Tutor, dados['tutor_id']).ativo:
+        flash('Selecione um tutor ativo.', 'error')
+    else:
+        db.session.add(Pet(**dados))
+        db.session.commit()
+        flash('Pet cadastrado.', 'ok')
+    return redirect(url_for('tutores_pets'))
+
+
+@app.route('/pets/<int:id>/editar', methods=['POST'])
+@login_required
+@perfil_requerido('atendente')
+def editar_pet(id):
+    p = db.get_or_404(Pet, id)
+    dados, erro = ler_pet()
+    if erro:
+        flash(erro, 'error')
+        return redirect(url_for('tutores_pets', editar_pet=id))
+    for k, v in dados.items():
+        setattr(p, k, v)
+    db.session.commit()
+    flash('Pet atualizado.', 'ok')
+    return redirect(url_for('tutores_pets'))
+
+
+@app.route('/pets/<int:id>/inativar', methods=['POST'])
+@login_required
+@perfil_requerido('atendente')
+def inativar_pet(id):
+    db.get_or_404(Pet, id).ativo = False
+    db.session.commit()
+    flash('Pet inativado (histórico preservado).', 'ok')
+    return redirect(url_for('tutores_pets'))
+
+
+@app.route('/pets/<int:id>/reativar', methods=['POST'])
+@login_required
+@perfil_requerido('atendente')
+def reativar_pet(id):
+    p = db.get_or_404(Pet, id)
+    if not p.tutor.ativo:
+        flash('Reative primeiro o tutor deste pet.', 'error')
+    else:
+        p.ativo = True
+        db.session.commit()
+        flash('Pet reativado.', 'ok')
+    return redirect(url_for('tutores_pets'))
+
+
+# =====================================================================
+# AGENDA (RF04)
+# =====================================================================
+@app.route('/agenda')
+@login_required
+def agenda():
+    editando = None
+    if current_user.perfil == 'atendente':
+        c = db.session.get(Consulta, request.args.get('reagendar', type=int) or 0)
+        editando = c if c and c.status == 'Agendada' else None
+
+    return render_template('agenda.html',
+                           consultas=Consulta.query.order_by(Consulta.data, Consulta.hora).all(),
+                           pets=Pet.query.filter_by(ativo=True).order_by(Pet.nome).all(),
+                           vets=Usuario.query.filter_by(perfil='veterinario', ativo=True).all(),
+                           horarios=HORARIOS,
+                           ocupados=mapa_ocupados(editando.id if editando else None),
+                           hoje=date.today().isoformat(),
+                           editando=editando)
+
+
+@app.route('/agenda/agendar', methods=['POST'])
+@login_required
+@perfil_requerido('atendente')
+def agendar():
+    pet_id = request.form.get('pet', type=int)
+    vet_id = request.form.get('vet', type=int)
+    data = request.form.get('data', '')
+    hora = request.form.get('hora', '')
+
+    erro = 'Selecione o animal e o veterinário.' if not pet_id or not vet_id \
+        else validar_horario(vet_id, data, hora)                       # RN02, RN07
+    if erro:
+        flash(erro, 'error')
+        return redirect(url_for('agenda'))
+
+    db.session.add(Consulta(pet_id=pet_id, vet_id=vet_id, data=data, hora=hora))
+    try:
+        db.session.commit()
+        flash('Consulta agendada.', 'ok')
+    except IntegrityError:                                             # RN01
+        db.session.rollback()
+        flash('Horário ocupado para este veterinário. Escolha outro.', 'error')
+    return redirect(url_for('agenda'))
+
+
+@app.route('/agenda/<int:id>/reagendar', methods=['POST'])
+@login_required
+@perfil_requerido('atendente')
+def reagendar(id):
+    c = db.get_or_404(Consulta, id)
+    if c.status != 'Agendada':
+        flash('Só é possível reagendar consultas agendadas.', 'error')
+        return redirect(url_for('agenda'))
+
+    vet_id = request.form.get('vet', type=int)
+    data = request.form.get('data', '')
+    hora = request.form.get('hora', '')
+    erro = validar_horario(vet_id, data, hora)
+    if erro:
+        flash(erro, 'error')
+        return redirect(url_for('agenda', reagendar=id))
+
+    c.vet_id, c.data, c.hora = vet_id, data, hora        # o horário antigo é liberado (RN03)
+    try:
+        db.session.commit()
+        flash('Consulta reagendada.', 'ok')
+    except IntegrityError:                               # RN01
+        db.session.rollback()
+        flash('Horário ocupado para este veterinário. Escolha outro.', 'error')
+        return redirect(url_for('agenda', reagendar=id))
+    return redirect(url_for('agenda'))
+
+
+@app.route('/agenda/<int:id>/cancelar', methods=['POST'])
+@login_required
+@perfil_requerido('atendente')
+def cancelar(id):
+    c = db.get_or_404(Consulta, id)
+    if c.status == 'Agendada':
+        c.status = 'Cancelada'                           # RN03
+        db.session.commit()
+        flash('Consulta cancelada; horário liberado.', 'ok')
+    return redirect(url_for('agenda'))
+
+
+# =====================================================================
+# PRONTUÁRIO (RF05) – somente o veterinário responsável (RN05)
+# =====================================================================
+@app.route('/prontuario')
+@login_required
+@perfil_requerido('veterinario')
+def prontuario():
+    minhas = Consulta.query.filter(Consulta.vet_id == current_user.id)
+    return render_template('prontuario.html',
+                           pendentes=minhas.filter(Consulta.status == 'Agendada')
+                           .order_by(Consulta.data, Consulta.hora).all(),
+                           feitas=minhas.filter(Consulta.status == 'Realizada')
+                           .order_by(Consulta.data.desc(), Consulta.hora.desc()).all())
+
+
+@app.route('/prontuario/<int:consulta_id>', methods=['GET', 'POST'])
+@login_required
+@perfil_requerido('veterinario')
+def prontuario_form(consulta_id):
+    c = db.get_or_404(Consulta, consulta_id)
+    if c.vet_id != current_user.id:                      # RN05
+        flash('Esta consulta é de outro veterinário.', 'error')
+        return redirect(url_for('prontuario'))
+    if c.status == 'Cancelada':
+        flash('Consulta cancelada não tem prontuário.', 'error')
+        return redirect(url_for('prontuario'))
+
+    p = c.prontuario
+    if request.method == 'POST':
+        f = {k: request.form.get(k, '').strip() for k in CAMPOS_PRONTUARIO}
+        if not f['sintomas'] or not f['diagnostico'] or not f['procedimentos']:
+            flash('Preencha os campos obrigatórios (*).', 'error')     # os dados digitados são mantidos (RNF03)
+        else:
+            if p is None:
+                p = Prontuario(consulta_id=c.id)
+                db.session.add(p)
+            for k, v in f.items():
+                setattr(p, k, v)
+            c.status = 'Realizada'
+            db.session.commit()
+            flash('Prontuário salvo; consulta marcada como Realizada.', 'ok')
+            return redirect(url_for('prontuario'))
+    else:
+        f = {k: (getattr(p, k) or '') if p else '' for k in CAMPOS_PRONTUARIO}
+
+    return render_template('prontuario_form.html', c=c, f=f)
+
+
+# =====================================================================
+# HISTÓRICO DO ANIMAL (RF07) – veterinário
+# =====================================================================
+@app.route('/historico')
+@login_required
+@perfil_requerido('veterinario')
+def historico():
+    pet = db.session.get(Pet, request.args.get('pet', type=int) or 0)
+    registros = []
+    if pet:
+        registros = (Prontuario.query.join(Consulta)
+                     .filter(Consulta.pet_id == pet.id)
+                     .order_by(Consulta.data.desc(), Consulta.hora.desc()).all())
+    return render_template('historico.html', pets=Pet.query.order_by(Pet.nome).all(),
+                           pet=pet, registros=registros)
+
+
+# =====================================================================
+# BUSCA (RF06) – todos os perfis
+# =====================================================================
+@app.route('/busca')
+@login_required
+def busca():
+    q = request.args.get('q', '').strip()
+    pets, tutores = [], []
+    if q:
+        like = f'%{q}%'
+        pets = (Pet.query.join(Tutor)
+                .filter(or_(Pet.nome.ilike(like), Tutor.nome.ilike(like)))
+                .order_by(Pet.nome).all())
+        tutores = Tutor.query.filter(Tutor.nome.ilike(like)).order_by(Tutor.nome).all()
+    return render_template('busca.html', q=q, pets=pets, tutores=tutores)
+
+
+# =====================================================================
+# USUÁRIOS E VETERINÁRIOS (RF02) – administrador
+# =====================================================================
+def ler_usuario(id_atual=None):
+    """Lê e valida o formulário de usuário. Retorna (dados, senha, erro)."""
+    dados = dict(nome=request.form.get('nome', '').strip(),
+                 email=request.form.get('email', '').strip().lower(),
+                 perfil=request.form.get('perfil', ''),
+                 crmv=request.form.get('crmv', '').strip() or None)
+    senha = request.form.get('senha', '')
+    if not dados['nome'] or not dados['email']:
+        erro = 'Informe nome e e-mail.'
+    elif dados['perfil'] not in PERFIS:
+        erro = 'Perfil inválido.'
+    elif dados['perfil'] == 'veterinario' and not dados['crmv']:
+        erro = 'Veterinário exige CRMV.'
+    elif email_em_uso(dados['email'], id_atual):
+        erro = 'E-mail já cadastrado.'
+    elif (id_atual is None or senha) and len(senha) < 6:
+        erro = 'A senha deve ter pelo menos 6 caracteres.'
+    else:
+        erro = None
+    if dados['perfil'] != 'veterinario':
+        dados['crmv'] = None
+    return dados, senha, erro
+
+
+@app.route('/usuarios')
+@login_required
+@perfil_requerido('administrador')
+def usuarios():
+    editando = db.session.get(Usuario, request.args.get('editar', type=int) or 0)
+    return render_template('usuarios.html', perfis=PERFIS, editando=editando,
+                           usuarios=Usuario.query.order_by(Usuario.nome).all())
+
+
+@app.route('/usuarios', methods=['POST'])
+@login_required
+@perfil_requerido('administrador')
+def cadastrar_usuario():
+    dados, senha, erro = ler_usuario()
+    if erro:
+        flash(erro, 'error')
+    else:
+        u = Usuario(**dados)
+        u.set_senha(senha)                               # RNF13: só o hash é salvo
+        db.session.add(u)
+        db.session.commit()
+        flash('Usuário cadastrado.', 'ok')
+    return redirect(url_for('usuarios'))
+
+
+@app.route('/usuarios/<int:id>/editar', methods=['POST'])
+@login_required
+@perfil_requerido('administrador')
+def editar_usuario(id):
+    u = db.get_or_404(Usuario, id)
+    dados, senha, erro = ler_usuario(id)
+    if erro:
+        flash(erro, 'error')
+        return redirect(url_for('usuarios', editar=id))
+    if u.id == current_user.id:                          # evita o admin se tirar do próprio acesso
+        dados['perfil'] = u.perfil
+    for k, v in dados.items():
+        setattr(u, k, v)
+    if senha:
+        u.set_senha(senha)
+    db.session.commit()
+    flash('Usuário atualizado.', 'ok')
+    return redirect(url_for('usuarios'))
+
+
+@app.route('/usuarios/<int:id>/inativar', methods=['POST'])
+@login_required
+@perfil_requerido('administrador')
+def inativar_usuario(id):
+    u = db.get_or_404(Usuario, id)
+    if u.id == current_user.id:
+        flash('Você não pode inativar a própria conta.', 'error')
+    else:
+        u.ativo = False                                  # RN09
+        db.session.commit()
+        flash('Usuário inativado.', 'ok')
+    return redirect(url_for('usuarios'))
+
+
+@app.route('/usuarios/<int:id>/reativar', methods=['POST'])
+@login_required
+@perfil_requerido('administrador')
+def reativar_usuario(id):
+    db.get_or_404(Usuario, id).ativo = True
+    db.session.commit()
+    flash('Usuário reativado.', 'ok')
+    return redirect(url_for('usuarios'))
+
+
+# =====================================================================
+# MEU PERFIL (RF02) – todos os perfis
+# =====================================================================
+@app.route('/perfil', methods=['GET', 'POST'])
+@login_required
+def perfil():
+    if request.method == 'POST':
+        nome = request.form.get('nome', '').strip()
+        email = request.form.get('email', '').strip().lower()
+        if not nome or not email:
+            flash('Informe nome e e-mail.', 'error')
+        elif email_em_uso(email, current_user.id):
+            flash('E-mail já cadastrado.', 'error')
+        else:
+            u = db.session.get(Usuario, current_user.id)
+            u.nome, u.email = nome, email
+            db.session.commit()
+            flash('Perfil atualizado.', 'ok')
+        return redirect(url_for('perfil'))
+    return render_template('perfil.html')
+
+
+@app.route('/perfil/senha', methods=['POST'])
+@login_required
+def alterar_senha():
+    u = db.session.get(Usuario, current_user.id)
+    atual = request.form.get('atual', '')
+    nova = request.form.get('nova', '')
+    confirma = request.form.get('confirma', '')
+    if not u.check_senha(atual):
+        flash('Senha atual incorreta.', 'error')
+    elif len(nova) < 6:
+        flash('A nova senha deve ter pelo menos 6 caracteres.', 'error')
+    elif nova != confirma:
+        flash('A confirmação não confere com a nova senha.', 'error')
+    else:
+        u.set_senha(nova)
+        db.session.commit()
+        flash('Senha alterada.', 'ok')
+    return redirect(url_for('perfil'))
+
+
+# =====================================================================
+# INICIALIZAÇÃO
+# =====================================================================
+with app.app_context():
+    db.create_all()
+
+# IMPORTANTE: app.run() sempre por ÚLTIMO. Rotas definidas depois dele não existem.
+if __name__ == '__main__':
+    app.run(debug=True)
