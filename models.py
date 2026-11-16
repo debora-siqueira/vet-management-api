@@ -1,0 +1,76 @@
+from flask_sqlalchemy import SQLAlchemy
+from flask_login import UserMixin
+from werkzeug.security import generate_password_hash, check_password_hash
+
+db = SQLAlchemy()
+
+
+class Usuario(UserMixin, db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    nome = db.Column(db.String(100), nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    senha_hash = db.Column(db.String(255), nullable=False)   # RNF13
+    perfil = db.Column(db.String(20), nullable=False)        # administrador | atendente | veterinario
+    crmv = db.Column(db.String(20))
+    ativo = db.Column(db.Boolean, default=True)
+
+    def set_senha(self, s):
+        self.senha_hash = generate_password_hash(s)
+
+    def check_senha(self, s):
+        return check_password_hash(self.senha_hash, s)
+
+
+class Tutor(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    nome = db.Column(db.String(100), nullable=False)
+    cpf = db.Column(db.String(14), unique=True, nullable=False)  # RN08
+    telefone = db.Column(db.String(20))
+    endereco = db.Column(db.String(200))
+    email = db.Column(db.String(120))
+    ativo = db.Column(db.Boolean, default=True)
+
+
+class Pet(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    nome = db.Column(db.String(80), nullable=False)
+    raca = db.Column(db.String(80))
+    sexo = db.Column(db.String(10))
+    idade = db.Column(db.Integer)
+    peso = db.Column(db.Float)
+    alergias = db.Column(db.String(200))
+    ativo = db.Column(db.Boolean, default=True)
+    tutor_id = db.Column(db.Integer, db.ForeignKey('tutor.id'), nullable=False)
+
+    # NOVO: permite usar pet.tutor.nome e tutor.pets nos templates
+    tutor = db.relationship('Tutor', backref='pets')
+
+
+class Consulta(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    pet_id = db.Column(db.Integer, db.ForeignKey('pet.id'), nullable=False)
+    vet_id = db.Column(db.Integer, db.ForeignKey('usuario.id'), nullable=False)
+    data = db.Column(db.String(10), nullable=False)    # 2026-11-12
+    hora = db.Column(db.String(5), nullable=False)     # 14:00
+    status = db.Column(db.String(20), default='Agendada')
+
+    # NOVO: permite usar consulta.pet.nome e consulta.vet.nome nos templates
+    pet = db.relationship('Pet')
+    vet = db.relationship('Usuario')
+
+    # RN01: um vet não pode ter 2 consultas no mesmo horário (cancelada não conta)
+    __table_args__ = (db.Index('uq_vet_horario', 'vet_id', 'data', 'hora',
+                               unique=True, sqlite_where=db.text("status != 'Cancelada'")),)
+
+
+class Prontuario(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    consulta_id = db.Column(db.Integer, db.ForeignKey('consulta.id'), nullable=False)
+    sintomas = db.Column(db.Text, nullable=False)
+    observacoes = db.Column(db.Text)
+    diagnostico = db.Column(db.Text, nullable=False)
+    procedimentos = db.Column(db.Text, nullable=False)
+    medicacoes = db.Column(db.Text)
+    orientacoes = db.Column(db.Text)
+
+    consulta = db.relationship('Consulta', backref=db.backref('prontuario', uselist=False))
