@@ -2,22 +2,21 @@
 {% block content %}
 <div class="login card">
     <img src="{{ url_for('static', filename='logo.png') }}" alt="VetClin – Clínica Veterinária" class="logo-login">
-    <p class="mu" style="text-align:center">Sistema de Gerenciamento de Clínica Veterinária</p>
+    <p class="mu" style="text-align:center; margin-bottom:1.25rem">Sistema de Gerenciamento de Clínica Veterinária</p>
 
     <form id="loginForm" method="POST" action="{{ url_for('login') }}">
         <label for="emailInput">E-mail</label>
         <input type="email" name="email" id="emailInput" required autofocus>
 
-        <label for="senhaInput" style="margin-top:.5rem">Senha</label>
+        <label for="senhaInput" style="margin-top:.75rem">Senha</label>
         <input type="password" name="senha" id="senhaInput" required>
 
-        <div style="margin-top:1rem">
-            <button type="submit" class="b">Entrar</button>
+        <div style="margin-top:1.25rem">
+            <button type="submit" class="b" style="width:100%">Entrar</button>
         </div>
     </form>
 
-    <p class="mu" style="margin-top:1.5rem;font-size:.85rem">Demonstração (senha 123456):</p>
-    <div class="linha">
+    <div class="linha" style="margin-top:1.5rem; padding-top:1rem; border-top:1px solid #e2ede4; justify-content:center; gap:.5rem">
         <button type="button" class="b s x" onclick="quickLogin('admin@clinica.com')">Administrador</button>
         <button type="button" class="b s x" onclick="quickLogin('atendente@clinica.com')">Atendente</button>
         <button type="button" class="b s x" onclick="quickLogin('vet@clinica.com')">Veterinário</button>

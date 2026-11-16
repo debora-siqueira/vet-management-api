@@ -39,9 +39,9 @@ h2 { font-size: 1.3rem; }
 h3 { font-size: 1rem; }
 
 /* classes utilitárias */
-.mu  { color: var(--texto-suave); }       /* texto secundário */
-.er  { color: var(--terracota-escuro); }  /* mensagem de erro */
-.sp  { flex: 1; }                         /* empurra itens para o lado */
+.mu  { color: var(--texto-suave); }       
+.er  { color: var(--terracota-escuro); }  
+.sp  { flex: 1; }                        
 .linha { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
 .g   { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
 
@@ -70,7 +70,7 @@ h3 { font-size: 1rem; }
 main {
   max-width: 1000px;
   margin: 0 auto;
-  padding: 1rem 1rem 120px; /* espaço extra para a navegação inferior */
+  padding: 1rem 1rem 120px; 
 }
 
 .bn {
@@ -292,10 +292,8 @@ th {
 .ic.t { background: var(--terracota-claro); color: var(--terracota-escuro); }
 .ic.g { background: var(--verde); color: var(--branco); }
 
-/* =====================================================
-   AJUSTES PARA CONVIVER COM O BOOTSTRAP 5
-   ===================================================== */
-.card { display: block; }                       /* o .card do Bootstrap usa flex e esticava os itens */
+
+.card { display: block; }                       
 a { color: var(--verde-escuro); }
 .b { display: inline-block; text-decoration: none; }
 .b.s, .b.d { text-decoration: none; }
@@ -330,9 +328,7 @@ a { color: var(--verde-escuro); }
 .msg.erro { background: var(--terracota-claro); color: var(--terracota-escuro); border-left: 4px solid var(--terracota); }
 
 
-/* =====================================================
-   LOGO DA CLÍNICA
-   ===================================================== */
+
 .logo-login {
   display: block;
   width: 100%;

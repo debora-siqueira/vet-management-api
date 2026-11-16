@@ -25,8 +25,8 @@
                 </select></div>
             <div><label>Data</label><input type="date" name="data" id="data" min="{{ hoje }}" value="{{ editando.data if editando else hoje }}" required></div>
             <div><label>Horário (ocupados ficam bloqueados)</label>
-                <select name="hora" id="hora" required>
-                    {% for h in horarios %}<option value="{{ h }}">{{ h }}</option>{% endfor %}
+                <select name="hora" id="hora" required data-ocupados="{{ ocupados|tojson|forceescape }}">
+                    {% for h in horarios %}<option value="{{ h }}" {{ 'selected' if editando and editando.hora == h }}>{{ h }}</option>{% endfor %}
                 </select></div>
         </div>
         <p class="linha mt-3">
@@ -67,12 +67,10 @@
 
 {% if current_user.perfil == 'atendente' %}
 <script>
-    // Bloqueia no <select> os horários ocupados do veterinário (RNF04) e os já passados.
-    const OCUPADOS = {{ ocupados|tojson }};
-    const HORA_INICIAL = {{ (editando.hora if editando else '')|tojson }};
     const vet = document.getElementById('vet');
     const data = document.getElementById('data');
     const hora = document.getElementById('hora');
+    const OCUPADOS = JSON.parse(hora.dataset.ocupados);
 
     function atualizarHorarios() {
         const ocup = (OCUPADOS[vet.value] || {})[data.value] || [];
@@ -89,7 +87,6 @@
     }
     vet.addEventListener('change', atualizarHorarios);
     data.addEventListener('change', atualizarHorarios);
-    if (HORA_INICIAL) hora.value = HORA_INICIAL;
     atualizarHorarios();
 </script>
 {% endif %}
