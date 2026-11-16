@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% set active_page = "busca" %}
+
+{% block content %}
+<h2>Busca</h2>
+
+<div class="card">
+    <form method="GET">
+        <label>Nome do animal ou do tutor</label>
+        <input type="text" name="q" value="{{ q }}" autofocus>
+        <p class="linha mt-3"><button type="submit" class="b">Buscar</button></p>
+    </form>
+</div>
+
+{% if q %}
+    {% if pets or tutores %}
+        {% if pets %}
+        <div class="card">
+            <h3>Animais</h3>
+            <div class="tw"><table>
+                <tr><th>Nome</th><th>Raça</th><th>Alergias</th><th>Tutor</th><th>Telefone</th></tr>
+                {% for p in pets %}
+                <tr><td>{{ p.nome }}</td><td>{{ p.raca or '—' }}</td><td>{{ p.alergias or '—' }}</td>
+                    <td>{{ p.tutor.nome }}</td><td>{{ p.tutor.telefone }}</td></tr>
+                {% endfor %}
+            </table></div>
+        </div>
+        {% endif %}
+        {% if tutores %}
+        <div class="card">
+            <h3>Tutores</h3>
+            <div class="tw"><table>
+                <tr><th>Nome</th><th>CPF</th><th>Telefone</th><th>Pets</th></tr>
+                {% for t in tutores %}
+                <tr><td>{{ t.nome }}</td><td>{{ t.cpf }}</td><td>{{ t.telefone }}</td>
+                    <td>{% for p in t.pets if p.ativo %}<span class="chip">{{ p.nome }}</span>{% endfor %}</td></tr>
+                {% endfor %}
+            </table></div>
+        </div>
+        {% endif %}
+    {% else %}
+        <div class="card"><span class="mu">Nenhum resultado para "{{ q }}".</span></div>
+    {% endif %}
+{% endif %}
+{% endblock %}

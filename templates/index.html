@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% set active_page = "home" %}
+
+{% block content %}
+<h2>Resumo</h2>
+<div class="stats">
+    <div class="st p"><b>{{ total_agendadas }}</b>Consultas agendadas</div>
+    <div class="st"><b>{{ consultas_realizadas }}</b>Consultas realizadas</div>
+</div>
+
+{% macro item(c, com_data=False) %}
+<div class="it">
+    <span class="ic {{ ['', 't', 'g'][c.id % 3] }}">{{ c.pet.nome[0] }}</span>
+    <div>
+        <b>{{ c.pet.nome }}</b>
+        <div class="mu">{% if com_data %}{{ c.data[8:] }}/{{ c.data[5:7] }} · {% endif %}{{ c.hora }} · {{ c.vet.nome }}</div>
+    </div>
+    <span class="sp"></span>
+    <span class="tag {{ 'c' if c.status == 'Cancelada' else 'r' if c.status == 'Realizada' }}">{{ c.status }}</span>
+</div>
+{% endmacro %}
+
+<div class="card">
+    <h3>Casos de hoje</h3>
+    {% for c in consultas_hoje %}{{ item(c) }}{% else %}<span class="mu">Nenhuma consulta hoje.</span>{% endfor %}
+</div>
+
+<div class="card">
+    <h3>Horários livres hoje</h3>
+    {% for vet, horas in livres %}
+        <p><b>{{ vet.nome }}</b><br>
+        {% for h in horas %}<span class="chip">{{ h }}</span>{% else %}<span class="mu">Sem horários livres.</span>{% endfor %}</p>
+    {% else %}
+        <span class="mu">Nenhum veterinário ativo.</span>
+    {% endfor %}
+</div>
+
+<div class="card">
+    <h3>Próximos dias</h3>
+    {% for c in proximas %}{{ item(c, True) }}{% else %}<span class="mu">Nenhuma consulta futura.</span>{% endfor %}
+</div>
+{% endblock %}

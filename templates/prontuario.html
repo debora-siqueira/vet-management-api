@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% set active_page = "prontuario" %}
+
+{% block content %}
+<h2>Prontuário</h2>
+
+<div class="card">
+    <h3>Consultas aguardando atendimento</h3>
+    <div class="tw">
+        <table>
+            <tr><th>Data</th><th>Hora</th><th>Pet</th><th>Alergias</th><th></th></tr>
+            {% for c in pendentes %}
+            <tr>
+                <td>{{ c.data|data_br }}</td><td>{{ c.hora }}</td><td>{{ c.pet.nome }}</td>
+                <td>{{ c.pet.alergias or '—' }}</td>
+                <td><a href="{{ url_for('prontuario_form', consulta_id=c.id) }}" class="b x">Atender</a></td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5" class="mu">Nenhuma consulta pendente.</td></tr>
+            {% endfor %}
+        </table>
+    </div>
+</div>
+
+<div class="card">
+    <h3>Atendimentos realizados</h3>
+    <div class="tw">
+        <table>
+            <tr><th>Data</th><th>Hora</th><th>Pet</th><th></th></tr>
+            {% for c in feitas %}
+            <tr>
+                <td>{{ c.data|data_br }}</td><td>{{ c.hora }}</td><td>{{ c.pet.nome }}</td>
+                <td><a href="{{ url_for('prontuario_form', consulta_id=c.id) }}" class="b s x">Ver / editar</a></td>
+            </tr>
+            {% else %}
+            <tr><td colspan="4" class="mu">Nenhum atendimento registrado.</td></tr>
+            {% endfor %}
+        </table>
+    </div>
+</div>
+{% endblock %}

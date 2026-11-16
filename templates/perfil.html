@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% set active_page = "perfil" %}
+
+{% block content %}
+<h2>Meu perfil</h2>
+
+<div class="card">
+    <h3>Meus dados</h3>
+    <form method="POST" action="{{ url_for('perfil') }}">
+        <div class="g">
+            <div><label>Nome</label><input type="text" name="nome" value="{{ current_user.nome }}" required></div>
+            <div><label>E-mail</label><input type="email" name="email" value="{{ current_user.email }}" required></div>
+        </div>
+        <p class="mu mt-3" style="margin-bottom:0">Perfil de acesso: {{ current_user.perfil }}{% if current_user.crmv %} · CRMV {{ current_user.crmv }}{% endif %}</p>
+        <p class="linha mt-3"><button type="submit" class="b">Salvar dados</button></p>
+    </form>
+</div>
+
+<div class="card">
+    <h3>Alterar senha</h3>
+    <form method="POST" action="{{ url_for('alterar_senha') }}">
+        <div class="g">
+            <div><label>Senha atual</label><input type="password" name="atual" required></div>
+            <div><label>Nova senha (mín. 6)</label><input type="password" name="nova" required></div>
+            <div><label>Confirmar nova senha</label><input type="password" name="confirma" required></div>
+        </div>
+        <p class="linha mt-3"><button type="submit" class="b">Alterar senha</button></p>
+    </form>
+</div>
+{% endblock %}

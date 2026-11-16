@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% set active_page = "tutores" %}
+
+{% block content %}
+<h2>Tutores e pets</h2>
+
+{% if current_user.perfil == 'atendente' %}
+{% set et = tutor_edit %}
+<div class="card">
+    <h3>{{ 'Editar tutor' if et else 'Novo tutor' }}</h3>
+    <form method="POST" action="{{ url_for('editar_tutor', id=et.id) if et else url_for('cadastrar_tutor') }}">
+        <div class="g">
+            <div><label>Nome</label><input type="text" name="nome" value="{{ et.nome if et else '' }}" required></div>
+            <div><label>CPF</label><input type="text" name="cpf" placeholder="000.000.000-00" value="{{ et.cpf if et else '' }}" required></div>
+            <div><label>Telefone</label><input type="text" name="telefone" value="{{ et.telefone or '' if et else '' }}" required></div>
+            <div><label>E-mail</label><input type="email" name="email" value="{{ et.email or '' if et else '' }}"></div>
+            <div><label>Endereço</label><input type="text" name="endereco" value="{{ et.endereco or '' if et else '' }}"></div>
+        </div>
+        <p class="linha mt-3">
+            <button type="submit" class="b">{{ 'Salvar alterações' if et else 'Cadastrar tutor' }}</button>
+            {% if et %}<a href="{{ url_for('tutores_pets') }}" class="b s">Cancelar</a>{% endif %}
+        </p>
+    </form>
+</div>
+
+{% set pe = pet_edit %}
+<div class="card">
+    <h3>{{ 'Editar pet' if pe else 'Novo pet' }}</h3>
+    <form method="POST" action="{{ url_for('editar_pet', id=pe.id) if pe else url_for('cadastrar_pet') }}">
+        <div class="g">
+            <div><label>Tutor</label>
+                <select name="tutor_id" required>
+                    <option value="">Selecione…</option>
+                    {% for t in tutores if t.ativo or (pe and pe.tutor_id == t.id) %}
+                    <option value="{{ t.id }}" {{ 'selected' if pe and pe.tutor_id == t.id }}>{{ t.nome }}</option>
+                    {% endfor %}
+                </select></div>
+            <div><label>Nome</label><input type="text" name="nome" value="{{ pe.nome if pe else '' }}" required></div>
+            <div><label>Raça</label><input type="text" name="raca" value="{{ pe.raca or '' if pe else '' }}"></div>
+            <div><label>Sexo</label>
+                <select name="sexo">
+                    <option {{ 'selected' if pe and pe.sexo == 'Macho' }}>Macho</option>
+                    <option {{ 'selected' if pe and pe.sexo == 'Fêmea' }}>Fêmea</option>
+                </select></div>
+            <div><label>Idade (anos)</label><input type="number" name="idade" min="0" value="{{ pe.idade if pe and pe.idade is not none else '' }}"></div>
+            <div><label>Peso (kg)</label><input type="number" name="peso" step="0.1" min="0" value="{{ pe.peso if pe and pe.peso is not none else '' }}"></div>
+            <div><label>Alergias</label><input type="text" name="alergias" value="{{ pe.alergias or '' if pe else '' }}"></div>
+        </div>
+        <p class="linha mt-3">
+            <button type="submit" class="b">{{ 'Salvar alterações' if pe else 'Cadastrar pet' }}</button>
+            {% if pe %}<a href="{{ url_for('tutores_pets') }}" class="b s">Cancelar</a>{% endif %}
+        </p>
+    </form>
+</div>
+{% endif %}
+
+<div class="card">
+    <h3>Tutores</h3>
+    <div class="tw">
+        <table>
+            <tr><th>Nome</th><th>CPF</th><th>Telefone</th><th>Pets</th><th>Situação</th><th></th></tr>
+            {% for t in tutores %}
+            <tr>
+                <td>{{ t.nome }}</td>
+                <td>{{ t.cpf }}</td>
+                <td>{{ t.telefone }}</td>
+                <td>{% for p in t.pets if p.ativo %}<span class="chip">{{ p.nome }}</span>{% endfor %}</td>
+                <td>{{ 'Ativo' if t.ativo else 'Inativo' }}</td>
+                <td>
+                    {% if current_user.perfil == 'atendente' and t.ativo %}
+                    <a href="{{ url_for('tutores_pets', editar_tutor=t.id) }}" class="b s x">Editar</a>
+                    <form method="POST" action="{{ url_for('inativar_tutor', id=t.id) }}" style="display:inline">
+                        <button class="b d x">Inativar</button>
+                    </form>
+                    {% elif current_user.perfil == 'atendente' %}
+                    <form method="POST" action="{{ url_for('reativar_tutor', id=t.id) }}" style="display:inline">
+                        <button class="b s x">Reativar</button>
+                    </form>
+                    {% endif %}
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" class="mu">Nenhum tutor cadastrado.</td></tr>
+            {% endfor %}
+        </table>
+    </div>
+</div>
+
+<div class="card">
+    <h3>Pets</h3>
+    <div class="tw">
+        <table>
+            <tr><th>Nome</th><th>Raça</th><th>Sexo</th><th>Idade</th><th>Peso</th><th>Alergias</th><th>Tutor</th><th></th></tr>
+            {% for p in pets %}
+            <tr>
+                <td>{{ p.nome }}</td>
+                <td>{{ p.raca or '—' }}</td>
+                <td>{{ p.sexo or '—' }}</td>
+                <td>{{ p.idade if p.idade is not none else '—' }}</td>
+                <td>{{ p.peso if p.peso is not none else '—' }}</td>
+                <td>{{ p.alergias or '—' }}</td>
+                <td>{{ p.tutor.nome }}</td>
+                <td>
+                    {% if current_user.perfil == 'atendente' and p.ativo %}
+                    <a href="{{ url_for('tutores_pets', editar_pet=p.id) }}" class="b s x">Editar</a>
+                    <form method="POST" action="{{ url_for('inativar_pet', id=p.id) }}" style="display:inline">
+                        <button class="b d x">Inativar</button>
+                    </form>
+                    {% elif current_user.perfil == 'atendente' and p.tutor.ativo %}
+                    <form method="POST" action="{{ url_for('reativar_pet', id=p.id) }}" style="display:inline">
+                        <button class="b s x">Reativar</button>
+                    </form>
+                    {% elif not p.ativo %}Inativo{% endif %}
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="8" class="mu">Nenhum pet cadastrado.</td></tr>
+            {% endfor %}
+        </table>
+    </div>
+</div>
+{% endblock %}

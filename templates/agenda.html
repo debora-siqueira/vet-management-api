@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% set active_page = "agenda" %}
+
+{% block content %}
+<h2>Agenda</h2>
+
+{% if current_user.perfil == 'atendente' %}
+<div class="card">
+    <h3>{{ 'Reagendar consulta' if editando else 'Nova consulta' }}</h3>
+    <form method="POST" action="{{ url_for('reagendar', id=editando.id) if editando else url_for('agendar') }}">
+        <div class="g">
+            <div><label>Animal</label>
+                {% if editando %}
+                <input type="text" value="{{ editando.pet.nome }} ({{ editando.pet.tutor.nome }})" disabled>
+                {% else %}
+                <select name="pet" required>
+                    <option value="">Selecione…</option>
+                    {% for p in pets %}<option value="{{ p.id }}">{{ p.nome }} ({{ p.tutor.nome }})</option>{% endfor %}
+                </select>
+                {% endif %}</div>
+            <div><label>Veterinário</label>
+                <select name="vet" id="vet" required>
+                    <option value="">Selecione…</option>
+                    {% for v in vets %}<option value="{{ v.id }}" {{ 'selected' if editando and editando.vet_id == v.id }}>{{ v.nome }}</option>{% endfor %}
+                </select></div>
+            <div><label>Data</label><input type="date" name="data" id="data" min="{{ hoje }}" value="{{ editando.data if editando else hoje }}" required></div>
+            <div><label>Horário (ocupados ficam bloqueados)</label>
+                <select name="hora" id="hora" required>
+                    {% for h in horarios %}<option value="{{ h }}">{{ h }}</option>{% endfor %}
+                </select></div>
+        </div>
+        <p class="linha mt-3">
+            <button type="submit" class="b">{{ 'Salvar novo horário' if editando else 'Agendar' }}</button>
+            {% if editando %}<a href="{{ url_for('agenda') }}" class="b s">Cancelar edição</a>{% endif %}
+        </p>
+    </form>
+</div>
+{% endif %}
+
+<div class="card">
+    <h3>Consultas</h3>
+    <div class="tw">
+        <table>
+            <tr><th>Data</th><th>Hora</th><th>Pet</th><th>Veterinário</th><th>Status</th><th></th></tr>
+            {% for c in consultas %}
+            <tr>
+                <td>{{ c.data|data_br }}</td>
+                <td>{{ c.hora }}</td>
+                <td>{{ c.pet.nome }}</td>
+                <td>{{ c.vet.nome }}</td>
+                <td><span class="tag {{ 'c' if c.status == 'Cancelada' else 'r' if c.status == 'Realizada' }}">{{ c.status }}</span></td>
+                <td>
+                    {% if current_user.perfil == 'atendente' and c.status == 'Agendada' %}
+                    <a href="{{ url_for('agenda', reagendar=c.id) }}" class="b s x">Reagendar</a>
+                    <form method="POST" action="{{ url_for('cancelar', id=c.id) }}" style="display:inline">
+                        <button class="b d x">Cancelar</button>
+                    </form>
+                    {% endif %}
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" class="mu">Nenhuma consulta.</td></tr>
+            {% endfor %}
+        </table>
+    </div>
+</div>
+
+{% if current_user.perfil == 'atendente' %}
+<script>
+    // Bloqueia no <select> os horários ocupados do veterinário (RNF04) e os já passados.
+    const OCUPADOS = {{ ocupados|tojson }};
+    const HORA_INICIAL = {{ (editando.hora if editando else '')|tojson }};
+    const vet = document.getElementById('vet');
+    const data = document.getElementById('data');
+    const hora = document.getElementById('hora');
+
+    function atualizarHorarios() {
+        const ocup = (OCUPADOS[vet.value] || {})[data.value] || [];
+        const agora = new Date();
+        let primeiroLivre = null;
+        for (const opt of hora.options) {
+            const passado = new Date(data.value + 'T' + opt.value) < agora;
+            const ocupado = ocup.includes(opt.value);
+            opt.disabled = ocupado || passado;
+            opt.textContent = opt.value + (ocupado ? ' – ocupado' : passado ? ' – passado' : '');
+            if (!opt.disabled && !primeiroLivre) primeiroLivre = opt.value;
+        }
+        if (primeiroLivre && hora.selectedOptions[0].disabled) hora.value = primeiroLivre;
+    }
+    vet.addEventListener('change', atualizarHorarios);
+    data.addEventListener('change', atualizarHorarios);
+    if (HORA_INICIAL) hora.value = HORA_INICIAL;
+    atualizarHorarios();
+</script>
+{% endif %}
+{% endblock %}

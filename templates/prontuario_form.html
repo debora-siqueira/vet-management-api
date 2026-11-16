@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% set active_page = "prontuario" %}
+
+{% block content %}
+<h2>Atendimento</h2>
+
+<div class="card">
+    <p>
+        <b>{{ c.pet.nome }}</b> · {{ c.pet.raca or 'sem raça' }} ·
+        {{ c.pet.idade ~ ' a' if c.pet.idade is not none else '—' }} ·
+        {{ c.pet.peso ~ ' kg' if c.pet.peso is not none else '—' }}<br>
+        <span class="mu">Tutor: {{ c.pet.tutor.nome }} · Consulta de {{ c.data|data_br }} às {{ c.hora }}</span>
+    </p>
+
+    {% if c.pet.alergias %}
+    <div class="al"><b>Atenção – alergias:</b> {{ c.pet.alergias }}</div>      <!-- RNF08 -->
+    {% endif %}
+    <p><a href="{{ url_for('historico', pet=c.pet_id) }}">Ver histórico deste animal</a></p>
+
+    <form method="POST">
+        <label>Sintomas *</label>
+        <textarea name="sintomas" required>{{ f.sintomas }}</textarea>
+
+        <label style="margin-top:.5rem">Observações</label>
+        <textarea name="observacoes">{{ f.observacoes }}</textarea>
+
+        <label style="margin-top:.5rem">Diagnóstico *</label>
+        <textarea name="diagnostico" required>{{ f.diagnostico }}</textarea>
+
+        <label style="margin-top:.5rem">Procedimentos *</label>
+        <textarea name="procedimentos" required>{{ f.procedimentos }}</textarea>
+
+        <label style="margin-top:.5rem">Medicações{% if c.pet.alergias %} (atenção às alergias acima){% endif %}</label>
+        <textarea name="medicacoes">{{ f.medicacoes }}</textarea>
+
+        <label style="margin-top:.5rem">Orientações ao tutor</label>
+        <textarea name="orientacoes">{{ f.orientacoes }}</textarea>
+
+        <p class="linha mt-3">
+            <button type="submit" class="b">Salvar prontuário</button>
+            <a href="{{ url_for('prontuario') }}" class="b s">Voltar</a>
+        </p>
+    </form>
+</div>
+{% endblock %}

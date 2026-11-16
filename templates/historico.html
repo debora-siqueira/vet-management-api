@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% set active_page = "historico" %}
+
+{% block content %}
+<h2>Histórico do animal</h2>
+
+<div class="card">
+    <form method="GET">
+        <label>Animal</label>
+        <select name="pet" onchange="this.form.submit()">
+            <option value="">Selecione…</option>
+            {% for p in pets %}
+            <option value="{{ p.id }}" {{ 'selected' if pet and pet.id == p.id }}>{{ p.nome }} ({{ p.tutor.nome }})</option>
+            {% endfor %}
+        </select>
+        <noscript><button class="b mt-3">Ver histórico</button></noscript>
+    </form>
+    {% if pet and pet.alergias %}<div class="al"><b>Atenção – alergias:</b> {{ pet.alergias }}</div>{% endif %}
+</div>
+
+{% if pet %}
+    {% for r in registros %}
+    <div class="card">
+        <h3>{{ r.consulta.data|data_br }} às {{ r.consulta.hora }} · {{ r.consulta.vet.nome }}</h3>
+        <p><span class="mu">Sintomas:</span> {{ r.sintomas }}</p>
+        <p><span class="mu">Diagnóstico:</span> {{ r.diagnostico }}</p>
+        <p><span class="mu">Procedimentos:</span> {{ r.procedimentos }}</p>
+        <p><span class="mu">Medicações:</span> {{ r.medicacoes or '—' }}</p>
+        <p><span class="mu">Orientações:</span> {{ r.orientacoes or '—' }}</p>
+        {% if r.observacoes %}<p><span class="mu">Observações:</span> {{ r.observacoes }}</p>{% endif %}
+    </div>
+    {% else %}
+    <div class="card"><span class="mu">Nenhum atendimento registrado para {{ pet.nome }}.</span></div>
+    {% endfor %}
+{% endif %}
+{% endblock %}

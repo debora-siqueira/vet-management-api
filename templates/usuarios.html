@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% set active_page = "usuarios" %}
+
+{% block content %}
+<h2>Usuários e veterinários</h2>
+
+{% set u = editando %}
+<div class="card">
+    <h3>{{ 'Editar usuário' if u else 'Novo usuário' }}</h3>
+    <form method="POST" action="{{ url_for('editar_usuario', id=u.id) if u else url_for('cadastrar_usuario') }}">
+        <div class="g">
+            <div><label>Nome</label><input type="text" name="nome" value="{{ u.nome if u else '' }}" required></div>
+            <div><label>E-mail</label><input type="email" name="email" value="{{ u.email if u else '' }}" required></div>
+            <div><label>{{ 'Nova senha (deixe em branco para manter)' if u else 'Senha inicial (mín. 6)' }}</label>
+                <input type="password" name="senha" {{ '' if u else 'required' }}></div>
+            <div><label>Perfil</label>
+                <select name="perfil" {{ 'disabled' if u and u.id == current_user.id }}>
+                    {% for p in perfis %}<option value="{{ p }}" {{ 'selected' if u and u.perfil == p }}>{{ p|capitalize }}</option>{% endfor %}
+                </select>
+                {% if u and u.id == current_user.id %}<input type="hidden" name="perfil" value="{{ u.perfil }}">{% endif %}</div>
+            <div><label>CRMV (obrigatório para veterinários)</label>
+                <input type="text" name="crmv" value="{{ u.crmv or '' if u else '' }}"></div>
+        </div>
+        <p class="linha mt-3">
+            <button type="submit" class="b">{{ 'Salvar alterações' if u else 'Cadastrar' }}</button>
+            {% if u %}<a href="{{ url_for('usuarios') }}" class="b s">Cancelar</a>{% endif %}
+        </p>
+    </form>
+</div>
+
+<div class="card">
+    <h3>Equipe</h3>
+    <div class="tw">
+        <table>
+            <tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>CRMV</th><th>Situação</th><th></th></tr>
+            {% for x in usuarios %}
+            <tr>
+                <td>{{ x.nome }}</td><td>{{ x.email }}</td><td>{{ x.perfil }}</td>
+                <td>{{ x.crmv or '—' }}</td><td>{{ 'Ativo' if x.ativo else 'Inativo' }}</td>
+                <td>
+                    <a href="{{ url_for('usuarios', editar=x.id) }}" class="b s x">Editar</a>
+                    {% if x.ativo and x.id != current_user.id %}
+                    <form method="POST" action="{{ url_for('inativar_usuario', id=x.id) }}" style="display:inline">
+                        <button class="b d x">Inativar</button></form>
+                    {% elif not x.ativo %}
+                    <form method="POST" action="{{ url_for('reativar_usuario', id=x.id) }}" style="display:inline">
+                        <button class="b s x">Reativar</button></form>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </table>
+    </div>
+</div>
+{% endblock %}
