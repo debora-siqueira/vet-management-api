@@ -11,13 +11,27 @@
         {{ c.pet.peso ~ ' kg' if c.pet.peso is not none else '—' }}<br>
         <span class="mu">Tutor: {{ c.pet.tutor.nome }} · Consulta de {{ c.data|data_br }} às {{ c.hora }}</span>
     </p>
-
-    {% if c.pet.alergias %}
-    <div class="al"><b>Atenção – alergias:</b> {{ c.pet.alergias }}</div>
-    {% endif %}
     <p><a href="{{ url_for('historico', pet=c.pet_id) }}">Ver histórico deste animal</a></p>
 
+    <h3>Histórico do animal</h3>
+    {% for r in historico %}
+    <div class="al">
+        <b>{{ r.data|data_br }} às {{ r.consulta.hora }} · {{ r.consulta.vet.nome }}</b>
+        <p><span class="mu">Sintomas:</span> {{ r.sintomas }}</p>
+        <p><span class="mu">Diagnóstico:</span> {{ r.diagnostico }}</p>
+        <p><span class="mu">Procedimentos:</span> {{ r.procedimentos }}</p>
+        <p><span class="mu">Medicações:</span> {{ r.medicacoes or '—' }}</p>
+        <p><span class="mu">Orientações:</span> {{ r.orientacoes or '—' }}</p>
+        {% if r.observacoes %}<p><span class="mu">Observações:</span> {{ r.observacoes }}</p>{% endif %}
+    </div>
+    {% else %}
+    <p class="mu">Nenhum atendimento anterior registrado para este animal.</p>
+    {% endfor %}
+
     <form method="POST">
+        <label>Data do atendimento *</label>
+        <input type="date" name="data" value="{{ f.data }}" required>
+
         <label>Sintomas *</label>
         <textarea name="sintomas" required>{{ f.sintomas }}</textarea>
 
@@ -30,8 +44,15 @@
         <label style="margin-top:.5rem">Procedimentos *</label>
         <textarea name="procedimentos" required>{{ f.procedimentos }}</textarea>
 
-        <label style="margin-top:.5rem">Medicações{% if c.pet.alergias %} (atenção às alergias acima){% endif %}</label>
-        <textarea name="medicacoes">{{ f.medicacoes }}</textarea>
+        <div class="g" style="margin-top:.5rem">
+            {% if c.pet.alergias %}
+            <div class="al"><b>Atenção – alergias:</b> {{ c.pet.alergias }}</div>
+            {% endif %}
+            <div>
+                <label>Medicações{% if c.pet.alergias %} (consulte as alergias ao lado){% endif %}</label>
+                <textarea name="medicacoes">{{ f.medicacoes }}</textarea>
+            </div>
+        </div>
 
         <label style="margin-top:.5rem">Orientações ao tutor</label>
         <textarea name="orientacoes">{{ f.orientacoes }}</textarea>

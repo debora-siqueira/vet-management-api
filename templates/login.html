@@ -16,18 +16,5 @@
         </div>
     </form>
 
-    <div class="linha" style="margin-top:1.5rem; padding-top:1rem; border-top:1px solid #e2ede4; justify-content:center; gap:.5rem">
-        <button type="button" class="b s x" onclick="quickLogin('admin@clinica.com')">Administrador</button>
-        <button type="button" class="b s x" onclick="quickLogin('atendente@clinica.com')">Atendente</button>
-        <button type="button" class="b s x" onclick="quickLogin('vet@clinica.com')">Veterinário</button>
-    </div>
 </div>
-
-<script>
-    function quickLogin(email) {
-        document.getElementById('emailInput').value = email;
-        document.getElementById('senhaInput').value = '123456';
-        document.getElementById('loginForm').submit();
-    }
-</script>
 {% endblock %}

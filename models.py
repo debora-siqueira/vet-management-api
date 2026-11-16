@@ -1,3 +1,5 @@
+from datetime import date
+
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -56,13 +58,20 @@ class Consulta(db.Model):
     pet = db.relationship('Pet')
     vet = db.relationship('Usuario')
 
-    __table_args__ = (db.Index('uq_vet_horario', 'vet_id', 'data', 'hora',
-                               unique=True, sqlite_where=db.text("status != 'Cancelada'")),)
+    __table_args__ = (
+        db.Index('uq_vet_horario', 'vet_id', 'data', 'hora',
+                 unique=True, sqlite_where=db.text("status != 'Cancelada'")),
+        db.Index('ix_consulta_data_hora', 'data', 'hora'),
+        db.Index('ix_consulta_status_data_hora', 'status', 'data', 'hora'),
+        db.Index('ix_consulta_vet_status_data_hora', 'vet_id', 'status', 'data', 'hora'),
+        db.Index('ix_consulta_pet_data_hora', 'pet_id', 'data', 'hora'),
+    )
 
 
 class Prontuario(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     consulta_id = db.Column(db.Integer, db.ForeignKey('consulta.id'), nullable=False)
+    data = db.Column(db.String(10), nullable=False, default=lambda: date.today().isoformat())
     sintomas = db.Column(db.Text, nullable=False)
     observacoes = db.Column(db.Text)
     diagnostico = db.Column(db.Text, nullable=False)
@@ -71,3 +80,7 @@ class Prontuario(db.Model):
     orientacoes = db.Column(db.Text)
 
     consulta = db.relationship('Consulta', backref=db.backref('prontuario', uselist=False))
+
+    __table_args__ = (
+        db.Index('uq_prontuario_consulta_id', 'consulta_id', unique=True),
+    )

@@ -9,9 +9,10 @@
     <div class="tw">
         <table>
             <tr><th>Data</th><th>Hora</th><th>Pet</th><th>Alergias</th><th></th></tr>
-            {% for c in pendentes %}
+            {% for c in pendentes.items %}
             <tr>
-                <td>{{ c.data|data_br }}</td><td>{{ c.hora }}</td><td>{{ c.pet.nome }}</td>
+                <td>{{ (c.prontuario.data if c.prontuario else c.data)|data_br }}</td>
+                <td>{{ c.hora }}</td><td>{{ c.pet.nome }}</td>
                 <td>{{ c.pet.alergias or '—' }}</td>
                 <td><a href="{{ url_for('prontuario_form', consulta_id=c.id) }}" class="b x">Atender</a></td>
             </tr>
@@ -20,6 +21,13 @@
             {% endfor %}
         </table>
     </div>
+    {% if pendentes.pages > 1 %}
+    <nav class="linha mt-3" aria-label="Paginação das consultas pendentes">
+        {% if pendentes.has_prev %}<a class="b s x" href="{{ url_for('prontuario', pendentes_page=pendentes.prev_num, feitas_page=feitas.page) }}">Anterior</a>{% endif %}
+        <span class="mu">Página {{ pendentes.page }} de {{ pendentes.pages }} · {{ pendentes.total }} consultas</span>
+        {% if pendentes.has_next %}<a class="b s x" href="{{ url_for('prontuario', pendentes_page=pendentes.next_num, feitas_page=feitas.page) }}">Próxima</a>{% endif %}
+    </nav>
+    {% endif %}
 </div>
 
 <div class="card">
@@ -27,7 +35,7 @@
     <div class="tw">
         <table>
             <tr><th>Data</th><th>Hora</th><th>Pet</th><th></th></tr>
-            {% for c in feitas %}
+            {% for c in feitas.items %}
             <tr>
                 <td>{{ c.data|data_br }}</td><td>{{ c.hora }}</td><td>{{ c.pet.nome }}</td>
                 <td><a href="{{ url_for('prontuario_form', consulta_id=c.id) }}" class="b s x">Ver / editar</a></td>
@@ -37,5 +45,12 @@
             {% endfor %}
         </table>
     </div>
+    {% if feitas.pages > 1 %}
+    <nav class="linha mt-3" aria-label="Paginação dos atendimentos realizados">
+        {% if feitas.has_prev %}<a class="b s x" href="{{ url_for('prontuario', pendentes_page=pendentes.page, feitas_page=feitas.prev_num) }}">Anterior</a>{% endif %}
+        <span class="mu">Página {{ feitas.page }} de {{ feitas.pages }} · {{ feitas.total }} atendimentos</span>
+        {% if feitas.has_next %}<a class="b s x" href="{{ url_for('prontuario', pendentes_page=pendentes.page, feitas_page=feitas.next_num) }}">Próxima</a>{% endif %}
+    </nav>
+    {% endif %}
 </div>
 {% endblock %}

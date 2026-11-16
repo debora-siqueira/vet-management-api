@@ -15,34 +15,86 @@
                 {% else %}
                 <select name="pet" required>
                     <option value="">Selecione…</option>
-                    {% for p in pets %}<option value="{{ p.id }}">{{ p.nome }} ({{ p.tutor.nome }})</option>{% endfor %}
+                    {% for p in pets %}<option value="{{ p.id }}" {{ 'selected' if form_data.get('pet', '')|string == p.id|string }}>{{ p.nome }} ({{ p.tutor.nome }})</option>{% endfor %}
                 </select>
                 {% endif %}</div>
             <div><label>Veterinário</label>
                 <select name="vet" id="vet" required>
                     <option value="">Selecione…</option>
-                    {% for v in vets %}<option value="{{ v.id }}" {{ 'selected' if editando and editando.vet_id == v.id }}>{{ v.nome }}</option>{% endfor %}
+                    {% for v in vets %}<option value="{{ v.id }}" {{ 'selected' if form_data.get('vet', editando.vet_id if editando else '')|string == v.id|string }}>{{ v.nome }}</option>{% endfor %}
                 </select></div>
-            <div><label>Data</label><input type="date" name="data" id="data" min="{{ hoje }}" value="{{ editando.data if editando else hoje }}" required></div>
-            <div><label>Horário (ocupados ficam bloqueados)</label>
-                <select name="hora" id="hora" required data-ocupados="{{ ocupados|tojson|forceescape }}">
-                    {% for h in horarios %}<option value="{{ h }}" {{ 'selected' if editando and editando.hora == h }}>{{ h }}</option>{% endfor %}
+            <div><label>Data</label><input type="date" name="data" id="data" min="{{ hoje }}" value="{{ form_data.get('data', editando.data if editando and editando.data >= hoje else hoje) }}" required></div>
+            <div><label>Horário</label>
+                <select name="hora" id="hora" required
+                        data-url="{{ url_for('horarios_ocupados') }}"
+                        data-ignorar-id="{{ editando.id if editando else '' }}">
+                    {% for h in horarios %}<option value="{{ h }}" {{ 'selected' if form_data.get('hora', editando.hora if editando else '') == h }}>{{ h }}</option>{% endfor %}
                 </select></div>
         </div>
+        {% if busca_consulta %}<input type="hidden" name="buscar_consulta" value="{{ busca_consulta }}">{% endif %}
+        <p id="erroHorarios" class="mu" role="alert" hidden>Não foi possível carregar os horários. Tente alterar a data ou o veterinário.</p>
+        <p id="sugestaoHorario" class="al" role="status" hidden></p>
         <p class="linha mt-3">
             <button type="submit" class="b">{{ 'Salvar novo horário' if editando else 'Agendar' }}</button>
-            {% if editando %}<a href="{{ url_for('agenda') }}" class="b s">Cancelar edição</a>{% endif %}
+            {% if editando %}<a href="{{ url_for('agenda', buscar_consulta=busca_consulta) }}" class="b s">Cancelar edição</a>{% endif %}
         </p>
     </form>
 </div>
 {% endif %}
 
+{% if current_user.perfil == 'atendente' %}
 <div class="card">
-    <h3>Consultas</h3>
+    <h3>Pesquisar consulta para reagendar</h3>
+    <form method="GET" class="linha">
+        <div style="flex:1;min-width:220px">
+            <label for="buscarConsulta">Animal, tutor ou veterinário</label>
+            <input id="buscarConsulta" type="search" name="buscar_consulta"
+                   value="{{ busca_consulta }}" placeholder="Digite para localizar uma consulta">
+        </div>
+        <button type="submit" class="b">Pesquisar</button>
+    </form>
+    {% if encontradas is not none %}
+    <div class="tw mt-3">
+        <table>
+            <tr><th>Data</th><th>Hora</th><th>Pet</th><th>Tutor</th><th>Veterinário</th><th></th></tr>
+            {% for c in encontradas.items %}
+            <tr>
+                <td>{{ c.data|data_br }}</td>
+                <td>{{ c.hora }}</td>
+                <td>{{ c.pet.nome }}</td>
+                <td>{{ c.pet.tutor.nome }}</td>
+                <td>{{ c.vet.nome }}</td>
+                <td><a href="{{ url_for('agenda', reagendar=c.id, buscar_consulta=busca_consulta) }}" class="b s x">Reagendar</a></td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" class="mu">Nenhuma consulta agendada encontrada.</td></tr>
+            {% endfor %}
+        </table>
+    </div>
+    {% if encontradas.pages > 1 %}
+    <nav class="linha mt-3" aria-label="Paginação das consultas encontradas">
+        {% if encontradas.has_prev %}<a class="b s x" href="{{ url_for('agenda', buscar_consulta=busca_consulta, busca_page=encontradas.prev_num) }}">Anterior</a>{% endif %}
+        <span class="mu">Página {{ encontradas.page }} de {{ encontradas.pages }} · {{ encontradas.total }} consultas</span>
+        {% if encontradas.has_next %}<a class="b s x" href="{{ url_for('agenda', buscar_consulta=busca_consulta, busca_page=encontradas.next_num) }}">Próxima</a>{% endif %}
+    </nav>
+    {% endif %}
+    {% endif %}
+</div>
+{% endif %}
+
+<div class="card">
+    <div class="linha" style="justify-content:space-between">
+        <h3>{{ 'Consultas anteriores' if anteriores else 'Consultas de hoje em diante' }}</h3>
+        {% if anteriores %}
+        <a href="{{ url_for('agenda') }}" class="b s x">Ver de hoje em diante</a>
+        {% else %}
+        <a href="{{ url_for('agenda', anteriores=1) }}" class="b s x">Ver anteriores</a>
+        {% endif %}
+    </div>
     <div class="tw">
         <table>
             <tr><th>Data</th><th>Hora</th><th>Pet</th><th>Veterinário</th><th>Status</th><th></th></tr>
-            {% for c in consultas %}
+            {% for c in consultas.items %}
             <tr>
                 <td>{{ c.data|data_br }}</td>
                 <td>{{ c.hora }}</td>
@@ -51,7 +103,6 @@
                 <td><span class="tag {{ 'c' if c.status == 'Cancelada' else 'r' if c.status == 'Realizada' }}">{{ c.status }}</span></td>
                 <td>
                     {% if current_user.perfil == 'atendente' and c.status == 'Agendada' %}
-                    <a href="{{ url_for('agenda', reagendar=c.id) }}" class="b s x">Reagendar</a>
                     <form method="POST" action="{{ url_for('cancelar', id=c.id) }}" style="display:inline">
                         <button class="b d x">Cancelar</button>
                     </form>
@@ -63,6 +114,13 @@
             {% endfor %}
         </table>
     </div>
+    {% if consultas.pages > 1 %}
+    <nav class="linha mt-3" aria-label="Paginação das consultas">
+        {% if consultas.has_prev %}<a class="b s x" href="{{ url_for('agenda', page=consultas.prev_num, anteriores=1 if anteriores else none) }}">Anterior</a>{% endif %}
+        <span class="mu">Página {{ consultas.page }} de {{ consultas.pages }} · {{ consultas.total }} consultas</span>
+        {% if consultas.has_next %}<a class="b s x" href="{{ url_for('agenda', page=consultas.next_num, anteriores=1 if anteriores else none) }}">Próxima</a>{% endif %}
+    </nav>
+    {% endif %}
 </div>
 
 {% if current_user.perfil == 'atendente' %}
@@ -70,23 +128,80 @@
     const vet = document.getElementById('vet');
     const data = document.getElementById('data');
     const hora = document.getElementById('hora');
-    const OCUPADOS = JSON.parse(hora.dataset.ocupados);
+    const botao = hora.closest('form').querySelector('button[type="submit"]');
+    const erroHorarios = document.getElementById('erroHorarios');
+    const sugestaoHorario = document.getElementById('sugestaoHorario');
+    let requisicao = 0;
 
-    function atualizarHorarios() {
-        const ocup = (OCUPADOS[vet.value] || {})[data.value] || [];
-        const agora = new Date();
-        let primeiroLivre = null;
-        for (const opt of hora.options) {
-            const passado = new Date(data.value + 'T' + opt.value) < agora;
-            const ocupado = ocup.includes(opt.value);
-            opt.disabled = ocupado || passado;
-            opt.textContent = opt.value + (ocupado ? ' – ocupado' : passado ? ' – passado' : '');
-            if (!opt.disabled && !primeiroLivre) primeiroLivre = opt.value;
+    async function atualizarHorarios() {
+        const requisicaoAtual = ++requisicao;
+        erroHorarios.hidden = true;
+        sugestaoHorario.hidden = true;
+        if (!vet.value || !data.value) {
+            const agora = new Date();
+            for (const opt of hora.options) {
+                const passado = Boolean(data.value) && new Date(data.value + 'T' + opt.value) < agora;
+                opt.disabled = passado;
+                opt.textContent = opt.value + (passado ? ' – passado' : '');
+            }
+            hora.disabled = false;
+            botao.disabled = false;
+            return;
         }
-        if (primeiroLivre && hora.selectedOptions[0].disabled) hora.value = primeiroLivre;
+
+        const horaSelecionada = hora.value;
+        hora.disabled = true;
+        botao.disabled = true;
+        const parametros = new URLSearchParams({ vet: vet.value, data: data.value, hora: horaSelecionada });
+        if (hora.dataset.ignorarId) parametros.set('ignorar_id', hora.dataset.ignorarId);
+
+        try {
+            const resposta = await fetch(`${hora.dataset.url}?${parametros}`);
+            if (!resposta.ok) throw new Error('Falha ao consultar horários ocupados.');
+            const resultado = await resposta.json();
+            if (!Array.isArray(resultado.horarios)) throw new Error('Resposta inválida ao consultar horários.');
+            if (requisicaoAtual !== requisicao) return;
+
+            const ocupados = resultado.horarios;
+            const agora = new Date();
+            const horarioOcupado = ocupados.includes(horaSelecionada);
+            for (const opt of hora.options) {
+                const passado = new Date(data.value + 'T' + opt.value) < agora;
+                const ocupado = ocupados.includes(opt.value);
+                opt.disabled = passado;
+                opt.textContent = opt.value + (ocupado ? ' – ocupado' : passado ? ' – passado' : '');
+            }
+            if (horarioOcupado) {
+                if (resultado.sugestao) {
+                    const sugestao = resultado.sugestao;
+                    const partes = sugestao.data.split('-');
+                    sugestaoHorario.textContent = `O horário ${horaSelecionada} está ocupado. Próximo horário livre: ${partes[2]}/${partes[1]}/${partes[0]} às ${sugestao.hora}. `;
+                    const aplicar = document.createElement('button');
+                    aplicar.type = 'button';
+                    aplicar.className = 'b s x';
+                    aplicar.textContent = 'Usar sugestão';
+                    aplicar.addEventListener('click', () => {
+                        data.value = sugestao.data;
+                        hora.value = sugestao.hora;
+                        atualizarHorarios();
+                    });
+                    sugestaoHorario.appendChild(aplicar);
+                } else {
+                    sugestaoHorario.textContent = `O horário ${horaSelecionada} está ocupado e não há outro horário disponível.`;
+                }
+                sugestaoHorario.hidden = false;
+            }
+            hora.disabled = false;
+            botao.disabled = false;
+        } catch (error) {
+            if (requisicaoAtual !== requisicao) return;
+            erroHorarios.hidden = false;
+            console.error(error);
+        }
     }
     vet.addEventListener('change', atualizarHorarios);
     data.addEventListener('change', atualizarHorarios);
+    hora.addEventListener('change', atualizarHorarios);
     atualizarHorarios();
 </script>
 {% endif %}

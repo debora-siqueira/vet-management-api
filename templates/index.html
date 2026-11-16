@@ -36,7 +36,8 @@
 </div>
 
 <div class="card">
-    <h3>Próximos dias</h3>
+    <h3>Próximas consultas</h3>
     {% for c in proximas %}{{ item(c, True) }}{% else %}<span class="mu">Nenhuma consulta futura.</span>{% endfor %}
+    <p class="mt-3"><a href="{{ url_for('agenda') }}" class="b s">Ver agenda completa</a></p>
 </div>
 {% endblock %}

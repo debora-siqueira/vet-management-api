@@ -19,9 +19,9 @@
 </div>
 
 {% if pet %}
-    {% for r in registros %}
+    {% for r in registros.items %}
     <div class="card">
-        <h3>{{ r.consulta.data|data_br }} às {{ r.consulta.hora }} · {{ r.consulta.vet.nome }}</h3>
+        <h3>{{ r.data|data_br }} às {{ r.consulta.hora }} · {{ r.consulta.vet.nome }}</h3>
         <p><span class="mu">Sintomas:</span> {{ r.sintomas }}</p>
         <p><span class="mu">Diagnóstico:</span> {{ r.diagnostico }}</p>
         <p><span class="mu">Procedimentos:</span> {{ r.procedimentos }}</p>
@@ -32,5 +32,12 @@
     {% else %}
     <div class="card"><span class="mu">Nenhum atendimento registrado para {{ pet.nome }}.</span></div>
     {% endfor %}
+    {% if registros.pages > 1 %}
+    <nav class="linha mt-3" aria-label="Paginação do histórico">
+        {% if registros.has_prev %}<a class="b s x" href="{{ url_for('historico', pet=pet.id, page=registros.prev_num) }}">Anterior</a>{% endif %}
+        <span class="mu">Página {{ registros.page }} de {{ registros.pages }} · {{ registros.total }} atendimentos</span>
+        {% if registros.has_next %}<a class="b s x" href="{{ url_for('historico', pet=pet.id, page=registros.next_num) }}">Próxima</a>{% endif %}
+    </nav>
+    {% endif %}
 {% endif %}
 {% endblock %}

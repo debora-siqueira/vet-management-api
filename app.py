@@ -1,16 +1,21 @@
+import os
+import secrets
 from datetime import date, datetime, timedelta
 from functools import wraps
 
-from flask import Flask, render_template, request, redirect, url_for, flash, session
+from flask import Flask, jsonify, render_template, request, redirect, url_for, flash, session
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
-from sqlalchemy import or_
+from sqlalchemy import inspect, or_
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import joinedload, selectinload
 
 from models import db, Usuario, Tutor, Pet, Consulta, Prontuario
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///vet.db'
-app.config['SECRET_KEY'] = 'troque-isto'
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY') or secrets.token_hex(32)
+if not os.environ.get('SECRET_KEY'):
+    app.logger.warning('SECRET_KEY não configurada; usando chave temporária. Configure SECRET_KEY para produção.')
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=10)
 
 db.init_app(app)
@@ -43,6 +48,11 @@ HORARIOS = [f'{h:02d}:{m:02d}' for h in range(8, 18) for m in (0, 30)]
 PERFIS = ('administrador', 'atendente', 'veterinario')
 CAMPOS_PRONTUARIO = ('sintomas', 'observacoes', 'diagnostico',
                      'procedimentos', 'medicacoes', 'orientacoes')
+TAMANHO_PAGINA = 50
+
+
+def numero_pagina(parametro='page'):
+    return max(request.args.get(parametro, 1, type=int) or 1, 1)
 
 
 @app.template_filter('data_br')
@@ -63,15 +73,14 @@ def formatar_cpf(cpf):
     return f'{d[:3]}.{d[3:6]}.{d[6:9]}-{d[9:]}'
 
 
-def mapa_ocupados(ignorar_id=None):
-    """{vet_id: {data: [horas ocupadas]}} para bloquear horários na tela (RNF04)."""
-    q = Consulta.query.filter(Consulta.status != 'Cancelada')
-    if ignorar_id:
-        q = q.filter(Consulta.id != ignorar_id)
-    mapa = {}
-    for c in q:
-        mapa.setdefault(str(c.vet_id), {}).setdefault(c.data, []).append(c.hora)
-    return mapa
+def horarios_ocupados_hoje():
+    hoje = date.today().isoformat()
+    query = (db.session.query(Consulta.vet_id, Consulta.hora)
+             .filter(Consulta.status != 'Cancelada', Consulta.data == hoje))
+    ocupados = {}
+    for vet_id, hora in query:
+        ocupados.setdefault(str(vet_id), set()).add(hora)
+    return ocupados
 
 
 def validar_horario(vet_id, data, hora):
@@ -124,19 +133,24 @@ def logout():
 def index():
     hoje = date.today().isoformat()
     agora = datetime.now().strftime('%H:%M')
-    agendadas = (Consulta.query.filter_by(status='Agendada')
-                 .order_by(Consulta.data, Consulta.hora).all())
-    ocupados = mapa_ocupados()
+    agendadas = Consulta.query.filter_by(status='Agendada')
+    consultas_hoje = (agendadas.filter_by(data=hoje)
+                      .options(joinedload(Consulta.pet), joinedload(Consulta.vet))
+                      .order_by(Consulta.hora).all())
+    proximas = (agendadas.filter(Consulta.data > hoje)
+                .options(joinedload(Consulta.pet), joinedload(Consulta.vet))
+                .order_by(Consulta.data, Consulta.hora).all())
+    ocupados = horarios_ocupados_hoje()
 
     livres = []
     for v in Usuario.query.filter_by(perfil='veterinario', ativo=True).all():
-        ocup = ocupados.get(str(v.id), {}).get(hoje, [])
+        ocup = ocupados.get(str(v.id), set())
         livres.append((v, [h for h in HORARIOS if h not in ocup and h > agora]))
 
     return render_template('index.html',
-                           total_agendadas=len(agendadas),
-                           consultas_hoje=[c for c in agendadas if c.data == hoje],
-                           proximas=[c for c in agendadas if c.data > hoje],
+                           total_agendadas=agendadas.count(),
+                           consultas_hoje=consultas_hoje,
+                           proximas=proximas,
                            consultas_realizadas=Consulta.query.filter_by(status='Realizada').count(),
                            livres=livres)
 
@@ -148,8 +162,10 @@ def tutores_pets():
     tutor_edit = db.session.get(Tutor, request.args.get('editar_tutor', type=int) or 0) if editar else None
     pet_edit = db.session.get(Pet, request.args.get('editar_pet', type=int) or 0) if editar else None
     return render_template('tutores_pets.html',
-                           tutores=Tutor.query.order_by(Tutor.nome).all(),
-                           pets=Pet.query.order_by(Pet.nome).all(),
+                           tutores=(Tutor.query.options(selectinload(Tutor.pets))
+                                    .order_by(Tutor.nome).all()),
+                           pets=(Pet.query.options(joinedload(Pet.tutor))
+                                 .order_by(Pet.nome).all()),
                            tutor_edit=tutor_edit, pet_edit=pet_edit)
 
 
@@ -299,14 +315,114 @@ def agenda():
         c = db.session.get(Consulta, request.args.get('reagendar', type=int) or 0)
         editando = c if c and c.status == 'Agendada' else None
 
+    anteriores = request.args.get('anteriores') == '1'
+    busca_consulta = request.args.get('buscar_consulta', '').strip()
+    return render_agenda(anteriores=anteriores, editando=editando,
+                         busca_consulta=busca_consulta)
+
+
+def render_agenda(anteriores=False, editando=None, form_data=None,
+                  busca_consulta=''):
+    consulta_query = (Consulta.query
+                      .options(joinedload(Consulta.pet), joinedload(Consulta.vet)))
+    if anteriores:
+        consulta_query = consulta_query.filter(Consulta.data < date.today().isoformat())
+        ordenacao = (Consulta.data.desc(), Consulta.hora.desc(), Consulta.id.desc())
+    else:
+        consulta_query = consulta_query.filter(Consulta.data >= date.today().isoformat())
+        ordenacao = (Consulta.data, Consulta.hora, Consulta.id)
+
+    consultas = (consulta_query.order_by(*ordenacao)
+                 .paginate(page=numero_pagina(), per_page=TAMANHO_PAGINA, error_out=False))
+    encontradas = None
+    if busca_consulta:
+        like = f'%{busca_consulta}%'
+        encontradas = (Consulta.query
+                       .join(Consulta.pet).join(Pet.tutor).join(Consulta.vet)
+                       .options(joinedload(Consulta.pet), joinedload(Consulta.vet))
+                       .filter(Consulta.status == 'Agendada')
+                       .filter(or_(Pet.nome.ilike(like), Tutor.nome.ilike(like),
+                                   Usuario.nome.ilike(like)))
+                       .order_by(Consulta.data, Consulta.hora, Consulta.id)
+                       .paginate(page=numero_pagina('busca_page'),
+                                 per_page=TAMANHO_PAGINA, error_out=False))
     return render_template('agenda.html',
-                           consultas=Consulta.query.order_by(Consulta.data, Consulta.hora).all(),
-                           pets=Pet.query.filter_by(ativo=True).order_by(Pet.nome).all(),
+                           consultas=consultas,
+                           pets=(Pet.query.options(joinedload(Pet.tutor))
+                                 .filter_by(ativo=True).order_by(Pet.nome).all()),
                            vets=Usuario.query.filter_by(perfil='veterinario', ativo=True).all(),
                            horarios=HORARIOS,
-                           ocupados=mapa_ocupados(editando.id if editando else None),
                            hoje=date.today().isoformat(),
-                           editando=editando)
+                           editando=editando, anteriores=anteriores,
+                           form_data=form_data or {}, busca_consulta=busca_consulta,
+                           encontradas=encontradas)
+
+
+def proximo_horario_livre(vet_id, data, hora='', ignorar_id=None):
+    try:
+        dia_inicial = date.fromisoformat(data)
+    except ValueError:
+        return None
+
+    query = Consulta.query.filter(
+        Consulta.vet_id == vet_id,
+        Consulta.status != 'Cancelada',
+        Consulta.data >= data)
+    if ignorar_id:
+        query = query.filter(Consulta.id != ignorar_id)
+    ocupadas = {(consulta.data, consulta.hora) for consulta in query}
+    ultimo_dia = max((date.fromisoformat(dia) for dia, _ in ocupadas),
+                     default=dia_inicial)
+    dia = dia_inicial
+    agora = datetime.now()
+
+    while dia <= ultimo_dia + timedelta(days=1):
+        data_iso = dia.isoformat()
+        for horario in HORARIOS:
+            if dia == dia_inicial and hora and horario <= hora:
+                continue
+            if datetime.strptime(f'{data_iso} {horario}', '%Y-%m-%d %H:%M') < agora:
+                continue
+            if (data_iso, horario) not in ocupadas:
+                return {'data': data_iso, 'hora': horario}
+        dia += timedelta(days=1)
+    return None
+
+
+@app.route('/agenda/horarios-ocupados')
+@login_required
+@perfil_requerido('atendente')
+def horarios_ocupados():
+    vet_id = request.args.get('vet', type=int)
+    data = request.args.get('data', '')
+    ignorar_id = request.args.get('ignorar_id', type=int)
+    if not vet_id or not data:
+        return jsonify(error='Informe o veterinário e a data.'), 400
+    try:
+        data_validada = date.fromisoformat(data)
+    except ValueError:
+        return jsonify(error='Informe uma data válida.'), 400
+    if data_validada.isoformat() != data:
+        return jsonify(error='Informe uma data válida.'), 400
+
+    vet = Usuario.query.filter_by(id=vet_id, perfil='veterinario', ativo=True).first()
+    if not vet:
+        return jsonify(error='Veterinário inválido.'), 400
+
+    if ignorar_id:
+        consulta = db.session.get(Consulta, ignorar_id)
+        if not consulta or consulta.status != 'Agendada':
+            return jsonify(error='Consulta para reagendamento inválida.'), 400
+
+    query = (db.session.query(Consulta.hora)
+             .filter(Consulta.vet_id == vet_id, Consulta.data == data,
+                     Consulta.status != 'Cancelada'))
+    if ignorar_id:
+        query = query.filter(Consulta.id != ignorar_id)
+    horario_selecionado = request.args.get('hora', '')
+    sugestao = proximo_horario_livre(
+        vet_id, data, horario_selecionado, ignorar_id=ignorar_id)
+    return jsonify(horarios=[hora for (hora,) in query], sugestao=sugestao)
 
 
 @app.route('/agenda/agendar', methods=['POST'])
@@ -322,7 +438,7 @@ def agendar():
         else validar_horario(vet_id, data, hora)
     if erro:
         flash(erro, 'error')
-        return redirect(url_for('agenda'))
+        return render_agenda(form_data=request.form)
 
     db.session.add(Consulta(pet_id=pet_id, vet_id=vet_id, data=data, hora=hora))
     try:
@@ -330,7 +446,15 @@ def agendar():
         flash('Consulta agendada.', 'ok')
     except IntegrityError:
         db.session.rollback()
-        flash('Horário ocupado para este veterinário. Escolha outro.', 'error')
+        sugestao = proximo_horario_livre(vet_id, data, hora)
+        mensagem = 'Horário ocupado. Escolha outro horário.'
+        if sugestao:
+            mensagem += (
+                f" Próximo horário livre: "
+                f"{data_br(sugestao['data'])} às {sugestao['hora']}."
+            )
+        flash(mensagem, 'error')
+        return render_agenda(form_data=request.form)
     return redirect(url_for('agenda'))
 
 
@@ -349,7 +473,8 @@ def reagendar(id):
     erro = validar_horario(vet_id, data, hora)
     if erro:
         flash(erro, 'error')
-        return redirect(url_for('agenda', reagendar=id))
+        return render_agenda(editando=c, form_data=request.form,
+                             busca_consulta=request.form.get('buscar_consulta', '').strip())
 
     c.vet_id, c.data, c.hora = vet_id, data, hora
     try:
@@ -357,8 +482,16 @@ def reagendar(id):
         flash('Consulta reagendada.', 'ok')
     except IntegrityError:
         db.session.rollback()
-        flash('Horário ocupado para este veterinário. Escolha outro.', 'error')
-        return redirect(url_for('agenda', reagendar=id))
+        sugestao = proximo_horario_livre(vet_id, data, hora, ignorar_id=id)
+        mensagem = 'Horário ocupado. Escolha outro horário.'
+        if sugestao:
+            mensagem += (
+                f" Próximo horário livre: "
+                f"{data_br(sugestao['data'])} às {sugestao['hora']}."
+            )
+        flash(mensagem, 'error')
+        return render_agenda(editando=c, form_data=request.form,
+                             busca_consulta=request.form.get('buscar_consulta', '').strip())
     return redirect(url_for('agenda'))
 
 
@@ -379,11 +512,18 @@ def cancelar(id):
 @perfil_requerido('veterinario')
 def prontuario():
     minhas = Consulta.query.filter(Consulta.vet_id == current_user.id)
+    pendentes = (minhas.filter(Consulta.status == 'Agendada')
+                 .options(joinedload(Consulta.pet))
+                 .order_by(Consulta.data, Consulta.hora, Consulta.id)
+                 .paginate(page=numero_pagina('pendentes_page'),
+                           per_page=TAMANHO_PAGINA, error_out=False))
+    feitas = (minhas.filter(Consulta.status == 'Realizada')
+              .options(joinedload(Consulta.pet), joinedload(Consulta.prontuario))
+              .order_by(Consulta.data.desc(), Consulta.hora.desc(), Consulta.id.desc())
+              .paginate(page=numero_pagina('feitas_page'),
+                        per_page=TAMANHO_PAGINA, error_out=False))
     return render_template('prontuario.html',
-                           pendentes=minhas.filter(Consulta.status == 'Agendada')
-                           .order_by(Consulta.data, Consulta.hora).all(),
-                           feitas=minhas.filter(Consulta.status == 'Realizada')
-                           .order_by(Consulta.data.desc(), Consulta.hora.desc()).all())
+                           pendentes=pendentes, feitas=feitas)
 
 
 @app.route('/prontuario/<int:consulta_id>', methods=['GET', 'POST'])
@@ -401,12 +541,22 @@ def prontuario_form(consulta_id):
     p = c.prontuario
     if request.method == 'POST':
         f = {k: request.form.get(k, '').strip() for k in CAMPOS_PRONTUARIO}
-        if not f['sintomas'] or not f['diagnostico'] or not f['procedimentos']:
+        f['data'] = request.form.get('data', '').strip()
+        try:
+            data_atendimento = date.fromisoformat(f['data'])
+            if data_atendimento.isoformat() != f['data']:
+                raise ValueError
+        except ValueError:
+            data_atendimento = None
+        if not f['data'] or not data_atendimento:
+            flash('Informe uma data válida para o atendimento.', 'error')
+        elif not f['sintomas'] or not f['diagnostico'] or not f['procedimentos']:
             flash('Preencha os campos obrigatórios (*).', 'error')
         else:
             if p is None:
                 p = Prontuario(consulta_id=c.id)
                 db.session.add(p)
+            p.data = f.pop('data')
             for k, v in f.items():
                 setattr(p, k, v)
             c.status = 'Realizada'
@@ -415,8 +565,14 @@ def prontuario_form(consulta_id):
             return redirect(url_for('prontuario'))
     else:
         f = {k: (getattr(p, k) or '') if p else '' for k in CAMPOS_PRONTUARIO}
+        f['data'] = p.data if p else c.data
 
-    return render_template('prontuario_form.html', c=c, f=f)
+    historico = (Prontuario.query.join(Consulta)
+                 .options(joinedload(Prontuario.consulta).joinedload(Consulta.vet))
+                 .filter(Consulta.pet_id == c.pet_id, Consulta.id != c.id)
+                 .order_by(Prontuario.data.desc(), Consulta.hora.desc(), Consulta.id.desc())
+                 .all())
+    return render_template('prontuario_form.html', c=c, f=f, historico=historico)
 
 
 @app.route('/historico')
@@ -427,9 +583,12 @@ def historico():
     registros = []
     if pet:
         registros = (Prontuario.query.join(Consulta)
+                     .options(joinedload(Prontuario.consulta).joinedload(Consulta.vet))
                      .filter(Consulta.pet_id == pet.id)
-                     .order_by(Consulta.data.desc(), Consulta.hora.desc()).all())
-    return render_template('historico.html', pets=Pet.query.order_by(Pet.nome).all(),
+                     .order_by(Prontuario.data.desc(), Consulta.hora.desc(), Consulta.id.desc())
+                     .paginate(page=numero_pagina(), per_page=TAMANHO_PAGINA, error_out=False))
+    return render_template('historico.html',
+                           pets=Pet.query.options(joinedload(Pet.tutor)).order_by(Pet.nome).all(),
                            pet=pet, registros=registros)
 
 
@@ -440,10 +599,11 @@ def busca():
     pets, tutores = [], []
     if q:
         like = f'%{q}%'
-        pets = (Pet.query.join(Tutor)
+        pets = (Pet.query.options(joinedload(Pet.tutor)).join(Tutor)
                 .filter(or_(Pet.nome.ilike(like), Tutor.nome.ilike(like)))
                 .order_by(Pet.nome).all())
-        tutores = Tutor.query.filter(Tutor.nome.ilike(like)).order_by(Tutor.nome).all()
+        tutores = (Tutor.query.options(selectinload(Tutor.pets))
+                   .filter(Tutor.nome.ilike(like)).order_by(Tutor.nome).all())
     return render_template('busca.html', q=q, pets=pets, tutores=tutores)
 
 
@@ -581,6 +741,23 @@ def alterar_senha():
 
 with app.app_context():
     db.create_all()
+    with db.engine.begin() as conexao:
+        prontuario_colunas = {
+            coluna['name'] for coluna in inspect(conexao).get_columns('prontuario')
+        }
+        if 'data' not in prontuario_colunas:
+            conexao.exec_driver_sql('ALTER TABLE prontuario ADD COLUMN data VARCHAR(10)')
+        conexao.exec_driver_sql(
+            'UPDATE prontuario SET data = '
+            '(SELECT consulta.data FROM consulta '
+            'WHERE consulta.id = prontuario.consulta_id) '
+            'WHERE data IS NULL'
+        )
+    for tabela in (Consulta.__table__, Prontuario.__table__):
+        for indice in tabela.indexes:
+            indice.create(bind=db.engine, checkfirst=True)
+    db.Index('ix_prontuario_consulta_id', Prontuario.consulta_id).drop(
+        bind=db.engine, checkfirst=True)
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=os.environ.get('FLASK_DEBUG') == '1')
