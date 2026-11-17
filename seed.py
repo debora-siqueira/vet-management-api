@@ -18,6 +18,7 @@ def solicitar_senha(email):
 
 with app.app_context():
     usuarios = [
+        {'nome': 'Marta Souza', 'email': 'admin@clinica.com', 'perfil': 'administrador'},
         {'nome': 'Carlos Lima', 'email': 'atendente@clinica.com', 'perfil': 'atendente'},
         {'nome': 'Dra. Ana Prado', 'email': 'vet@clinica.com', 'perfil': 'veterinario', 'crmv': 'MG-12345'}
     ]
@@ -27,4 +28,4 @@ with app.app_context():
             u.set_senha(solicitar_senha(d['email']))
             db.session.add(u)
     db.session.commit()
-    print("Atendente e Veterinário adicionados com sucesso!")
+    print("Administrador, atendente e veterinário adicionados com sucesso!")

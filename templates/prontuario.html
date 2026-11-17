@@ -37,7 +37,7 @@
             <tr><th>Data</th><th>Hora</th><th>Pet</th><th></th></tr>
             {% for c in feitas.items %}
             <tr>
-                <td>{{ c.data|data_br }}</td><td>{{ c.hora }}</td><td>{{ c.pet.nome }}</td>
+                <td>{{ c.prontuario.data|data_br }}</td><td>{{ c.hora }}</td><td>{{ c.pet.nome }}</td>
                 <td><a href="{{ url_for('prontuario_form', consulta_id=c.id) }}" class="b s x">Ver / editar</a></td>
             </tr>
             {% else %}

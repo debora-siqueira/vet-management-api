@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin
@@ -84,3 +84,11 @@ class Prontuario(db.Model):
     __table_args__ = (
         db.Index('uq_prontuario_consulta_id', 'consulta_id', unique=True),
     )
+
+
+class RascunhoProntuario(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    token = db.Column(db.String(64), unique=True, nullable=False)
+    consulta_id = db.Column(db.Integer, db.ForeignKey('consulta.id'), nullable=False)
+    dados = db.Column(db.Text, nullable=False)
+    expira_em = db.Column(db.DateTime, nullable=False)

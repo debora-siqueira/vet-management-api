@@ -69,10 +69,11 @@
                 <td>
                     {% if current_user.perfil == 'atendente' and t.ativo %}
                     <a href="{{ url_for('tutores_pets', editar_tutor=t.id) }}" class="b s x">Editar</a>
-                    <form method="POST" action="{{ url_for('inativar_tutor', id=t.id) }}" style="display:inline">
-                        <button class="b d x">Inativar</button>
+                    <form method="POST" action="{{ url_for('excluir_tutor', id=t.id) }}" style="display:inline"
+                          onsubmit="return confirm('Excluir tutor e pets sem consultas? Se houver histórico, os registros serão inativados.')">
+                        <button class="b d x">Excluir dados</button>
                     </form>
-                    {% elif current_user.perfil == 'atendente' %}
+                    {% elif current_user.perfil == 'administrador' and not t.ativo %}
                     <form method="POST" action="{{ url_for('reativar_tutor', id=t.id) }}" style="display:inline">
                         <button class="b s x">Reativar</button>
                     </form>
@@ -90,7 +91,7 @@
     <h3>Pets</h3>
     <div class="tw">
         <table>
-            <tr><th>Nome</th><th>Raça</th><th>Sexo</th><th>Idade</th><th>Peso</th><th>Alergias</th><th>Tutor</th><th></th></tr>
+            <tr><th>Nome</th><th>Raça</th><th>Sexo</th><th>Idade</th><th>Peso</th><th>Alergias</th><th>Tutor</th><th>Situação</th><th></th></tr>
             {% for p in pets %}
             <tr>
                 <td>{{ p.nome }}</td>
@@ -100,21 +101,25 @@
                 <td>{{ p.peso if p.peso is not none else '—' }}</td>
                 <td>{{ p.alergias or '—' }}</td>
                 <td>{{ p.tutor.nome }}</td>
+                <td>{{ 'Ativo' if p.ativo else 'Inativo' }}</td>
                 <td>
                     {% if current_user.perfil == 'atendente' and p.ativo %}
                     <a href="{{ url_for('tutores_pets', editar_pet=p.id) }}" class="b s x">Editar</a>
-                    <form method="POST" action="{{ url_for('inativar_pet', id=p.id) }}" style="display:inline">
-                        <button class="b d x">Inativar</button>
+                    <form method="POST" action="{{ url_for('excluir_pet', id=p.id) }}" style="display:inline"
+                          onsubmit="return confirm('Excluir pet sem consultas? Se houver histórico, o pet será inativado.')">
+                        <button class="b d x">Excluir dados</button>
                     </form>
-                    {% elif current_user.perfil == 'atendente' and p.tutor.ativo %}
+                    {% elif current_user.perfil == 'administrador' and not p.ativo and p.tutor.ativo %}
                     <form method="POST" action="{{ url_for('reativar_pet', id=p.id) }}" style="display:inline">
                         <button class="b s x">Reativar</button>
                     </form>
-                    {% elif not p.ativo %}Inativo{% endif %}
+                    {% elif current_user.perfil == 'administrador' and not p.ativo %}
+                    Reative primeiro o tutor
+                    {% endif %}
                 </td>
             </tr>
             {% else %}
-            <tr><td colspan="8" class="mu">Nenhum pet cadastrado.</td></tr>
+            <tr><td colspan="9" class="mu">Nenhum pet cadastrado.</td></tr>
             {% endfor %}
         </table>
     </div>

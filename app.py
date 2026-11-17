@@ -1,5 +1,6 @@
 import os
 import secrets
+import json
 from datetime import date, datetime, timedelta
 from functools import wraps
 
@@ -9,10 +10,11 @@ from sqlalchemy import inspect, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload, selectinload
 
-from models import db, Usuario, Tutor, Pet, Consulta, Prontuario
+from models import db, Usuario, Tutor, Pet, Consulta, Prontuario, RascunhoProntuario
 
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///vet.db'
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get(
+    'DATABASE_URL', 'sqlite:///vet.db')
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY') or secrets.token_hex(32)
 if not os.environ.get('SECRET_KEY'):
     app.logger.warning('SECRET_KEY não configurada; usando chave temporária. Configure SECRET_KEY para produção.')
@@ -44,11 +46,35 @@ def perfil_requerido(*perfis):
     return decorator
 
 
-HORARIOS = [f'{h:02d}:{m:02d}' for h in range(8, 18) for m in (0, 30)]
+def minutos_do_dia(valor):
+    try:
+        hora, minuto = (int(parte) for parte in valor.split(':'))
+    except (AttributeError, ValueError):
+        raise RuntimeError('Configure os horários da clínica no formato HH:MM.')
+    if not 0 <= hora <= 23 or not 0 <= minuto <= 59:
+        raise RuntimeError('Configure os horários da clínica no formato HH:MM.')
+    return hora * 60 + minuto
+
+
+INICIO_EXPEDIENTE = minutos_do_dia(os.environ.get('CLINIC_OPEN', '08:00'))
+FIM_EXPEDIENTE = minutos_do_dia(os.environ.get('CLINIC_CLOSE', '18:00'))
+try:
+    INTERVALO_CONSULTA = int(os.environ.get('APPOINTMENT_INTERVAL_MINUTES', '30'))
+except ValueError:
+    raise RuntimeError('APPOINTMENT_INTERVAL_MINUTES deve ser um número inteiro.')
+if INTERVALO_CONSULTA <= 0 or FIM_EXPEDIENTE - INICIO_EXPEDIENTE < INTERVALO_CONSULTA:
+    raise RuntimeError('O intervalo e o expediente da clínica estão inválidos.')
+HORARIOS = [
+    f'{minuto // 60:02d}:{minuto % 60:02d}'
+    for minuto in range(INICIO_EXPEDIENTE,
+                        FIM_EXPEDIENTE - INTERVALO_CONSULTA + 1,
+                        INTERVALO_CONSULTA)
+]
 PERFIS = ('administrador', 'atendente', 'veterinario')
 CAMPOS_PRONTUARIO = ('sintomas', 'observacoes', 'diagnostico',
                      'procedimentos', 'medicacoes', 'orientacoes')
 TAMANHO_PAGINA = 50
+DURACAO_RASCUNHO_PRONTUARIO = timedelta(minutes=30)
 
 
 def numero_pagina(parametro='page'):
@@ -88,7 +114,7 @@ def validar_horario(vet_id, data, hora):
     if not vet_id:
         return 'Selecione o veterinário.'
     if hora not in HORARIOS:
-        return 'Horário fora do funcionamento da clínica (8h às 18h).'
+        return 'Horário fora do expediente configurado da clínica.'
     try:
         quando = datetime.strptime(f'{data} {hora}', '%Y-%m-%d %H:%M')
     except ValueError:
@@ -100,6 +126,43 @@ def validar_horario(vet_id, data, hora):
 
 def email_em_uso(email, id_atual=None):
     return Usuario.query.filter(Usuario.email == email, Usuario.id != (id_atual or 0)).first() is not None
+
+
+@app.before_request
+def preservar_prontuario_apos_expiracao():
+    if (request.endpoint != 'prontuario_form' or request.method != 'POST'
+            or current_user.is_authenticated):
+        return None
+
+    consulta_id = (request.view_args or {}).get('consulta_id')
+    consulta = db.session.get(Consulta, consulta_id) if consulta_id else None
+    if not consulta or consulta.status == 'Cancelada':
+        return None
+
+    agora = datetime.utcnow()
+    RascunhoProntuario.query.filter(
+        RascunhoProntuario.expira_em <= agora
+    ).delete(synchronize_session=False)
+    token_anterior = session.pop('rascunho_prontuario_token', None)
+    if token_anterior:
+        RascunhoProntuario.query.filter_by(token=token_anterior).delete()
+
+    dados = {'data': request.form.get('data', '').strip()}
+    dados.update({
+        campo: request.form.get(campo, '').strip()
+        for campo in CAMPOS_PRONTUARIO
+    })
+    token = secrets.token_urlsafe(32)
+    db.session.add(RascunhoProntuario(
+        token=token,
+        consulta_id=consulta.id,
+        dados=json.dumps(dados, ensure_ascii=False),
+        expira_em=agora + DURACAO_RASCUNHO_PRONTUARIO,
+    ))
+    db.session.commit()
+    session['rascunho_prontuario_token'] = token
+    flash('Sua sessão expirou. Faça login para recuperar o prontuário por até 30 minutos.', 'error')
+    return redirect(url_for('login'))
 
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -115,6 +178,20 @@ def login():
         if usuario and usuario.ativo and usuario.check_senha(senha):
             login_user(usuario)
             session.permanent = True
+            token = session.get('rascunho_prontuario_token')
+            if token:
+                rascunho = RascunhoProntuario.query.filter_by(token=token).first()
+                if rascunho and rascunho.expira_em > datetime.utcnow():
+                    consulta = db.session.get(Consulta, rascunho.consulta_id)
+                    if consulta and consulta.vet_id == usuario.id and consulta.status != 'Cancelada':
+                        return redirect(url_for(
+                            'prontuario_form', consulta_id=consulta.id))
+                    flash('Somente o veterinário responsável pode recuperar este prontuário.', 'error')
+                else:
+                    if rascunho:
+                        db.session.delete(rascunho)
+                    flash('O prazo para recuperar o prontuário expirou.', 'error')
+                    session.pop('rascunho_prontuario_token', None)
             return redirect(url_for('index'))
         flash('E-mail ou senha incorretos.', 'error')
 
@@ -137,7 +214,9 @@ def index():
     consultas_hoje = (agendadas.filter_by(data=hoje)
                       .options(joinedload(Consulta.pet), joinedload(Consulta.vet))
                       .order_by(Consulta.hora).all())
-    proximas = (agendadas.filter(Consulta.data > hoje)
+    limite_proximas = (date.today() + timedelta(days=7)).isoformat()
+    proximas = (agendadas.filter(Consulta.data > hoje,
+                                 Consulta.data <= limite_proximas)
                 .options(joinedload(Consulta.pet), joinedload(Consulta.vet))
                 .order_by(Consulta.data, Consulta.hora).all())
     ocupados = horarios_ocupados_hoje()
@@ -159,13 +238,22 @@ def index():
 @login_required
 def tutores_pets():
     editar = current_user.perfil == 'atendente'
-    tutor_edit = db.session.get(Tutor, request.args.get('editar_tutor', type=int) or 0) if editar else None
-    pet_edit = db.session.get(Pet, request.args.get('editar_pet', type=int) or 0) if editar else None
+    tutor_id = request.args.get('editar_tutor', type=int) or 0
+    pet_id = request.args.get('editar_pet', type=int) or 0
+    tutor_edit = (Tutor.query.filter_by(id=tutor_id, ativo=True).first()
+                  if editar else None)
+    pet_edit = (Pet.query.join(Tutor).filter(
+        Pet.id == pet_id, Pet.ativo.is_(True), Tutor.ativo.is_(True)
+    ).first() if editar else None)
+    tutores_query = Tutor.query.options(selectinload(Tutor.pets))
+    pets_query = Pet.query.options(joinedload(Pet.tutor))
+    if current_user.perfil != 'administrador':
+        tutores_query = tutores_query.filter(Tutor.ativo.is_(True))
+        pets_query = pets_query.join(Tutor).filter(
+            Pet.ativo.is_(True), Tutor.ativo.is_(True))
     return render_template('tutores_pets.html',
-                           tutores=(Tutor.query.options(selectinload(Tutor.pets))
-                                    .order_by(Tutor.nome).all()),
-                           pets=(Pet.query.options(joinedload(Pet.tutor))
-                                 .order_by(Pet.nome).all()),
+                           tutores=tutores_query.order_by(Tutor.nome).all(),
+                           pets=pets_query.order_by(Pet.nome).all(),
                            tutor_edit=tutor_edit, pet_edit=pet_edit)
 
 
@@ -205,6 +293,9 @@ def cadastrar_tutor():
 @perfil_requerido('atendente')
 def editar_tutor(id):
     t = db.get_or_404(Tutor, id)
+    if not t.ativo:
+        flash('Somente o administrador pode visualizar registros inativos.', 'error')
+        return redirect(url_for('tutores_pets'))
     dados, erro = ler_tutor(id)
     if erro:
         flash(erro, 'error')
@@ -216,19 +307,33 @@ def editar_tutor(id):
     return redirect(url_for('tutores_pets'))
 
 
-@app.route('/tutores/<int:id>/inativar', methods=['POST'])
+@app.route('/tutores/<int:id>/excluir', methods=['POST'])
 @login_required
 @perfil_requerido('atendente')
-def inativar_tutor(id):
-    db.get_or_404(Tutor, id).ativo = False
-    db.session.commit()
-    flash('Tutor inativado (histórico preservado).', 'ok')
+def excluir_tutor(id):
+    tutor = db.get_or_404(Tutor, id)
+    if not tutor.ativo:
+        flash('Somente o administrador pode visualizar registros inativos.', 'error')
+    else:
+        possui_historico = (Consulta.query.join(Pet)
+                            .filter(Pet.tutor_id == tutor.id).first())
+        if possui_historico:
+            tutor.ativo = False
+            for pet in tutor.pets:
+                pet.ativo = False
+            flash('Há consultas vinculadas. Tutor e pets foram inativados para preservar o histórico.', 'error')
+        else:
+            for pet in tutor.pets:
+                db.session.delete(pet)
+            db.session.delete(tutor)
+            flash('Tutor e pets excluídos; não havia consultas vinculadas.', 'ok')
+        db.session.commit()
     return redirect(url_for('tutores_pets'))
 
 
 @app.route('/tutores/<int:id>/reativar', methods=['POST'])
 @login_required
-@perfil_requerido('atendente')
+@perfil_requerido('administrador')
 def reativar_tutor(id):
     db.get_or_404(Tutor, id).ativo = True
     db.session.commit()
@@ -272,6 +377,9 @@ def cadastrar_pet():
 @perfil_requerido('atendente')
 def editar_pet(id):
     p = db.get_or_404(Pet, id)
+    if not p.ativo or not p.tutor.ativo:
+        flash('Somente o administrador pode visualizar registros inativos.', 'error')
+        return redirect(url_for('tutores_pets'))
     dados, erro = ler_pet()
     if erro:
         flash(erro, 'error')
@@ -283,19 +391,27 @@ def editar_pet(id):
     return redirect(url_for('tutores_pets'))
 
 
-@app.route('/pets/<int:id>/inativar', methods=['POST'])
+@app.route('/pets/<int:id>/excluir', methods=['POST'])
 @login_required
 @perfil_requerido('atendente')
-def inativar_pet(id):
-    db.get_or_404(Pet, id).ativo = False
-    db.session.commit()
-    flash('Pet inativado (histórico preservado).', 'ok')
+def excluir_pet(id):
+    pet = db.get_or_404(Pet, id)
+    if not pet.ativo or not pet.tutor.ativo:
+        flash('Somente o administrador pode visualizar registros inativos.', 'error')
+    elif Consulta.query.filter_by(pet_id=pet.id).first():
+        pet.ativo = False
+        db.session.commit()
+        flash('Há consultas vinculadas. O pet foi inativado para preservar o histórico.', 'error')
+    else:
+        db.session.delete(pet)
+        db.session.commit()
+        flash('Pet excluído; não havia consultas vinculadas.', 'ok')
     return redirect(url_for('tutores_pets'))
 
 
 @app.route('/pets/<int:id>/reativar', methods=['POST'])
 @login_required
-@perfil_requerido('atendente')
+@perfil_requerido('administrador')
 def reativar_pet(id):
     p = db.get_or_404(Pet, id)
     if not p.tutor.ativo:
@@ -349,7 +465,9 @@ def render_agenda(anteriores=False, editando=None, form_data=None,
     return render_template('agenda.html',
                            consultas=consultas,
                            pets=(Pet.query.options(joinedload(Pet.tutor))
-                                 .filter_by(ativo=True).order_by(Pet.nome).all()),
+                                 .filter(Pet.ativo.is_(True),
+                                         Pet.tutor.has(Tutor.ativo.is_(True)))
+                                 .order_by(Pet.nome).all()),
                            vets=Usuario.query.filter_by(perfil='veterinario', ativo=True).all(),
                            horarios=HORARIOS,
                            hoje=date.today().isoformat(),
@@ -518,8 +636,9 @@ def prontuario():
                  .paginate(page=numero_pagina('pendentes_page'),
                            per_page=TAMANHO_PAGINA, error_out=False))
     feitas = (minhas.filter(Consulta.status == 'Realizada')
+              .join(Consulta.prontuario)
               .options(joinedload(Consulta.pet), joinedload(Consulta.prontuario))
-              .order_by(Consulta.data.desc(), Consulta.hora.desc(), Consulta.id.desc())
+              .order_by(Prontuario.data.desc(), Consulta.hora.desc(), Consulta.id.desc())
               .paginate(page=numero_pagina('feitas_page'),
                         per_page=TAMANHO_PAGINA, error_out=False))
     return render_template('prontuario.html',
@@ -560,12 +679,30 @@ def prontuario_form(consulta_id):
             for k, v in f.items():
                 setattr(p, k, v)
             c.status = 'Realizada'
+            token = session.get('rascunho_prontuario_token')
+            if token:
+                RascunhoProntuario.query.filter_by(
+                    token=token, consulta_id=c.id
+                ).delete()
+                session.pop('rascunho_prontuario_token', None)
             db.session.commit()
             flash('Prontuário salvo; consulta marcada como Realizada.', 'ok')
             return redirect(url_for('prontuario'))
     else:
         f = {k: (getattr(p, k) or '') if p else '' for k in CAMPOS_PRONTUARIO}
         f['data'] = p.data if p else c.data
+        token = session.get('rascunho_prontuario_token')
+        if token:
+            rascunho = RascunhoProntuario.query.filter_by(token=token).first()
+            if rascunho and rascunho.expira_em > datetime.utcnow():
+                if rascunho.consulta_id == c.id:
+                    f.update(json.loads(rascunho.dados))
+                    flash('Rascunho recuperado. Revise os dados e salve o prontuário.', 'ok')
+            else:
+                if rascunho:
+                    db.session.delete(rascunho)
+                session.pop('rascunho_prontuario_token', None)
+                flash('O prazo para recuperar o prontuário expirou.', 'error')
 
     historico = (Prontuario.query.join(Consulta)
                  .options(joinedload(Prontuario.consulta).joinedload(Consulta.vet))
@@ -599,11 +736,16 @@ def busca():
     pets, tutores = [], []
     if q:
         like = f'%{q}%'
-        pets = (Pet.query.options(joinedload(Pet.tutor)).join(Tutor)
-                .filter(or_(Pet.nome.ilike(like), Tutor.nome.ilike(like)))
-                .order_by(Pet.nome).all())
-        tutores = (Tutor.query.options(selectinload(Tutor.pets))
-                   .filter(Tutor.nome.ilike(like)).order_by(Tutor.nome).all())
+        pets_query = (Pet.query.options(joinedload(Pet.tutor)).join(Tutor)
+                      .filter(or_(Pet.nome.ilike(like), Tutor.nome.ilike(like))))
+        tutores_query = (Tutor.query.options(selectinload(Tutor.pets))
+                         .filter(Tutor.nome.ilike(like)))
+        if current_user.perfil != 'administrador':
+            pets_query = pets_query.filter(
+                Pet.ativo.is_(True), Tutor.ativo.is_(True))
+            tutores_query = tutores_query.filter(Tutor.ativo.is_(True))
+        pets = pets_query.order_by(Pet.nome).all()
+        tutores = tutores_query.order_by(Tutor.nome).all()
     return render_template('busca.html', q=q, pets=pets, tutores=tutores)
 
 

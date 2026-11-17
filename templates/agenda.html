@@ -168,7 +168,7 @@
             for (const opt of hora.options) {
                 const passado = new Date(data.value + 'T' + opt.value) < agora;
                 const ocupado = ocupados.includes(opt.value);
-                opt.disabled = passado;
+                opt.disabled = ocupado || passado;
                 opt.textContent = opt.value + (ocupado ? ' – ocupado' : passado ? ' – passado' : '');
             }
             if (horarioOcupado) {
